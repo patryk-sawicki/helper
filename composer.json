@@ -1,0 +1,29 @@
+{
+    "name": "patryk-sawicki/helper",
+    "description": "A set of helpful tools.",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Patryk Sawicki",
+            "email": "patryk@patryksawicki.pl"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "PatrykSawicki\\Helper\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "PatrykSawicki\\Helper\\Tests\\": "tests/"
+        }
+    },
+    "require": {
+        "php": "^7.1 || ^8.0",
+        "ext-json": "*",
+        "illuminate/http": "^8.40"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.5"
+    }
+}
