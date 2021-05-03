@@ -21,9 +21,20 @@
     "require": {
         "php": "^7.1 || ^8.0",
         "ext-json": "*",
-        "illuminate/http": "^8.40"
+        "intervention/image": "^2.5",
+        "laravel/framework": "^8.00"
     },
     "require-dev": {
         "phpunit/phpunit": "^9.5"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "PatrykSawicki\\Helper\\Providers\\HelperServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true
     }
 }
