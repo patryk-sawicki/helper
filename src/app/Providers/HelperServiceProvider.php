@@ -30,6 +30,7 @@ class HelperServiceProvider extends ServiceProvider
      */
     public function register()
     {
-        //
+        $path = realpath($raw = __DIR__ . '/../../');
+        $this->mergeConfigFrom($path . '/config/filesSettings.php', 'filesSettings');
     }
 }
