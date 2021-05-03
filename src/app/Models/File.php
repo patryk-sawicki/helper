@@ -1,6 +1,6 @@
 <?php
 
-namespace PatrykSawicki\Helper\Models;
+namespace PatrykSawicki\Helper\app\Models;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;

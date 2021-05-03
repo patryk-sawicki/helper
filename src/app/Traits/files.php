@@ -1,6 +1,6 @@
 <?php
 
-namespace PatrykSawicki\Helper\Traits;
+namespace PatrykSawicki\Helper\app\Traits;
 
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;

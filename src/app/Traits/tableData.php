@@ -1,7 +1,7 @@
 <?php
 
 
-namespace PatrykSawicki\Helper\Traits;
+namespace PatrykSawicki\Helper\app\Traits;
 
 
 use Illuminate\Http\Request;

@@ -30,7 +30,7 @@
     "extra": {
         "laravel": {
             "providers": [
-                "PatrykSawicki\\Helper\\Providers\\HelperServiceProvider"
+                "PatrykSawicki\\Helper\\app\\Providers\\HelperServiceProvider"
             ]
         }
     },

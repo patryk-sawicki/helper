@@ -1,6 +1,6 @@
 <?php
 
-namespace PatrykSawicki\Helper\Providers;
+namespace PatrykSawicki\Helper\app\Providers;
 
 use Illuminate\Support\ServiceProvider;
 class HelperServiceProvider extends ServiceProvider

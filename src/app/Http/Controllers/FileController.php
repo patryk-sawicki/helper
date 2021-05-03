@@ -1,8 +1,8 @@
 <?php
 
-namespace PatrykSawicki\Helper\Http\Controllers;
+namespace PatrykSawicki\Helper\app\Http\Controllers;
 
-use PatrykSawicki\Helper\Models\File;
+use PatrykSawicki\Helper\app\Models\File;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class FileController extends Controller
