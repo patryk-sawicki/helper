@@ -18,7 +18,7 @@ class FileController extends Controller
             $this->middleware('permission:'.$permission);
     }
 
-    public function getFileById(File $file): BinaryFileResponse
+    public function downloadById(File $file): BinaryFileResponse
     {
         return response()->download('../storage/app'.$file, $file->name);
     }
