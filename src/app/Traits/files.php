@@ -15,17 +15,18 @@ trait files
      * Add file.
      *
      * @param UploadedFile $file
-     * @param string $type e.g. order_files
+     * @param string $location e.g. order_files
+     * @param string $relationName e.g. files
      */
-    public function addFile(UploadedFile $file, string $type='files')
+    public function addFile(UploadedFile $file, string $location='files', string $relationName='files')
     {
         $fileName=$file->getClientOriginalName();
-        $filePath='/'.config('filesSettings.main_dir', 'hidden').'/'.$type.'/'.
+        $filePath='/'.config('filesSettings.main_dir', 'hidden').'/' . $location . '/' .
                   date('Y').'/'.date('m').'/'.date('d').'/';
         $extension=explode('.', $fileName);
         $extension=strtolower($extension[count($extension)-1]);
 
-        $fileModel=$this->files()->create([
+        $fileModel=$this->{$relationName}()->create([
             'name'=>$fileName,
             'type'=>$extension,
             'file'=>$filePath,
@@ -55,11 +56,12 @@ trait files
      * Add files.
      *
      * @param array $files
-     * @param string $type e.g. order_files
+     * @param string $location e.g. order_files
+     * @param string $relationName e.g. files
      */
-    public function addFiles(array $files, string $type='files')
+    public function addFiles(array $files, string $location='files', string $relationName='files')
     {
         foreach($files as $file)
-            $this->addFile($file, $type);
+            $this->addFile($file, $location, $relationName);
     }
 }
