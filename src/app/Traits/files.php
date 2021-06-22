@@ -2,6 +2,7 @@
 
 namespace PatrykSawicki\Helper\app\Traits;
 
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Intervention\Image\ImageManagerStatic;
@@ -17,8 +18,9 @@ trait files
      * @param UploadedFile $file
      * @param string $location e.g. order_files
      * @param string $relationName e.g. files
+     * @return Model
      */
-    public function addFile(UploadedFile $file, string $location='files', string $relationName='files')
+    public function addFile(UploadedFile $file, string $location='files', string $relationName='files'): Model
     {
         $fileName=$file->getClientOriginalName();
         $filePath='/'.config('filesSettings.main_dir', 'hidden').'/' . $location . '/' .
@@ -45,11 +47,12 @@ trait files
                     $constraint->aspectRatio();
                 });
                 Storage::put($filePath.$fileModel->id, (string) $image->encode());
-                return;
+                return $fileModel;
             }
         }
 
         $file->storeAs($filePath, $fileModel->id);
+        return $fileModel;
     }
 
     /**
