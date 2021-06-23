@@ -1,3 +1,6 @@
+### 0.2.5
+Files trait - Added appending of file name to path.
+
 ### 0.2.4
 Files trait - Added option to get relation name.
 Files trait - addFile - Return created model.
