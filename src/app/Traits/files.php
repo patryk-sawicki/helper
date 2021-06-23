@@ -34,6 +34,8 @@ trait files
             'file'=>$filePath,
         ]);
 
+        $fileModel->update(['file'=>$filePath.$fileModel->id,]);
+
         if(explode('/', $file->getMimeType())[0]=='image')
         {
             $max_width=config('filesSettings.images.max_width', 1280);
