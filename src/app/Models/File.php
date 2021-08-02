@@ -5,6 +5,7 @@ namespace PatrykSawicki\Helper\app\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -19,6 +20,8 @@ class File extends Model
         'name',
         'type',
         'file',
+        'width',
+        'height',
         'model_type',
         'model_id',
     ];
@@ -31,5 +34,10 @@ class File extends Model
     public function model(): MorphTo
     {
         return $this->morphTo();
+    }
+
+    public function thumbnails(): MorphMany
+    {
+        return $this->morphMany(File::class, 'model');
     }
 }

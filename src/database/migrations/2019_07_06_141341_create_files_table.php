@@ -20,6 +20,10 @@ class CreateFilesTable extends Migration
             $table->string('type', 7);
             $table->string('file', 255);
 
+            $table->smallInteger('width')->unsigned()->nullable()->default(null)->index();
+            $table->smallInteger('height')->unsigned()->nullable()->default(null)->index();
+            $table->index(['width', 'height']);
+
             $table->string('model_type', 255)->nullable()->default(null)->index();
             $table->bigInteger('model_id')->unsigned()->nullable()->default(null)->index();
             $table->index(['model_type', 'model_id']);

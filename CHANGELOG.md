@@ -1,3 +1,6 @@
+### 0.2.6
+Files - Parameters for thumbnail handling have been added.
+
 ### 0.2.5
 Files trait - Added appending of file name to path.
 

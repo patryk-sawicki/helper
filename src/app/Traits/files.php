@@ -18,9 +18,12 @@ trait files
      * @param UploadedFile $file
      * @param string $location e.g. order_files
      * @param string $relationName e.g. files
+     * @param int|null $max_width
+     * @param int|null $max_height
      * @return Model
      */
-    public function addFile(UploadedFile $file, string $location='files', string $relationName='files'): Model
+    public function addFile(UploadedFile $file, string $location='files', string $relationName='files',
+                            int $max_width=null, int $max_height=null): Model
     {
         $fileName=$file->getClientOriginalName();
         $filePath='/'.config('filesSettings.main_dir', 'hidden').'/' . $location . '/' .
@@ -38,8 +41,8 @@ trait files
 
         if(explode('/', $file->getMimeType())[0]=='image')
         {
-            $max_width=config('filesSettings.images.max_width', 1280);
-            $max_height=config('filesSettings.images.max_height', 720);
+            $max_width??=config('filesSettings.images.max_width', 1280);
+            $max_height??=config('filesSettings.images.max_height', 720);
             [$w, $h]=getimagesize($file->getRealPath());
 
             if($w > $max_width || $h > $max_height)
@@ -49,8 +52,19 @@ trait files
                     $constraint->aspectRatio();
                 });
                 Storage::put($filePath.$fileModel->id, (string) $image->encode());
+
+                $fileModel->update([
+                    'width' => $max_width,
+                    'height' => $max_height,
+                ]);
+
                 return $fileModel;
             }
+            else
+                $fileModel->update([
+                    'width' => $w,
+                    'height' => $h,
+                ]);
         }
 
         $file->storeAs($filePath, $fileModel->id);
