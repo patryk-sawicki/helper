@@ -1,3 +1,6 @@
+### 0.2.7
+Table Data - Better support for searching in nested models.
+
 ### 0.2.6
 Files - Parameters for thumbnail handling have been added.
 

@@ -72,7 +72,7 @@ trait tableData
 
         if(str_contains($colName, '.'))
         {
-            [$model, $column['name']]=explode('.', $colName);
+            [$model, $column['name']]=explode('.', $colName, 2);
             return $this->filterTableData($item->{$model}, $column, $column['name']);
         }
 
