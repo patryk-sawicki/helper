@@ -1,3 +1,6 @@
+### 0.2.8
+Table Data - Fix for general search.
+
 ### 0.2.7
 Table Data - Better support for searching in nested models.
 

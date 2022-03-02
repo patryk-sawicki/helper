@@ -31,7 +31,7 @@ trait tableData
         if(!is_null($search))
         {
             $elements=$elements->filter(function ($item) use ($request, $search) {
-                $test=mb_strtolower($item->name.' '.$item->address.' '.($item->customerCategories->name ?? ''), 'UTF-8');
+                $test=mb_strtolower($item->__toString(), 'UTF-8');
                 $value=trim(json_encode(mb_strtolower($request->search['value'], 'UTF-8')), '"');
                 $value2=trim(mb_strtolower($request->search['value'], 'UTF-8'), '"');
                 $value3=trim(json_encode(mb_strtoupper($request->search['value'], 'UTF-8')), '"');
