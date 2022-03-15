@@ -1,3 +1,6 @@
+### 0.2.9
+Marked support for Laravel 9.
+
 ### 0.2.8
 Table Data - Fix for general search.
 
