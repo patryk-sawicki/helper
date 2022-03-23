@@ -18,6 +18,7 @@ class CreateFilesTable extends Migration
 
             $table->string('name', 127);
             $table->string('type', 7);
+            $table->string('mime_type', 63);
             $table->string('file', 255);
 
             $table->smallInteger('width')->unsigned()->nullable()->default(null)->index();

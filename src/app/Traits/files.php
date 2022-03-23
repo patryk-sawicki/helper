@@ -34,6 +34,7 @@ trait files
         $fileModel=$this->{$relationName}()->create([
             'name'=>$fileName,
             'type'=>$extension,
+            'mime_type'=>$file->getMimeType(),
             'file'=>$filePath,
         ]);
 

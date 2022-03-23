@@ -1,3 +1,6 @@
+### 0.3.0
+Files trait - Added saving of mime_type values.
+
 ### 0.2.9
 Marked support for Laravel 9.
 
