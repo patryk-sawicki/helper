@@ -76,6 +76,15 @@ trait tableData
             return $this->filterTableData($item->{$model}, $column, $column['name']);
         }
 
+        if(is_countable($item))
+        {
+            foreach($item as $el)
+                if($this->filterTableData($el, $column, $colName))
+                    return true;
+
+            return false;
+        }
+
         $testValue = stringEndsWith('()')->evaluate($colName, '', true) ?
             mb_strtolower($item->{trim($colName, '()')}(), 'UTF-8') :
             mb_strtolower($item->{$colName}, 'UTF-8');
