@@ -6,7 +6,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Intervention\Image\ImageManagerStatic;
-use PatrykSawicki\Helper\app\Models\File;
 
 /*
  * Trait for saving files.
@@ -32,26 +31,17 @@ trait files
         $extension=explode('.', $fileName);
         $extension=strtolower($extension[count($extension)-1]);
 
-        if($externalRelation)
-            $fileModel = $this->{$relationName}()->create([
-                'name' => $fileName,
-                'type' => $extension,
-                'mime_type' => $file->getMimeType(),
-                'file' => $filePath,
-            ]);
-        else
-        {
-            $fileModel = File::create([
-                'name' => $fileName,
-                'type' => $extension,
-                'mime_type' => $file->getMimeType(),
-                'file' => $filePath,
-            ]);
+        $fileModel = $this->{$relationName}()->create([
+            'name' => $fileName,
+            'type' => $extension,
+            'mime_type' => $file->getMimeType(),
+            'file' => $filePath,
+        ]);
 
+        if(!$externalRelation)
             $this->update([
-                $relationName => $fileModel->id,
+                $this->{$relationName}()->getForeignKeyName() => $fileModel->id,
             ]);
-        }
 
         $fileModel->update(['file'=>$filePath.$fileModel->id,]);
 

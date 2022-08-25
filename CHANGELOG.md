@@ -1,3 +1,6 @@
+### 0.3.3
+Files trait - Added saving in local relation - fix.
+
 ### 0.3.2
 Files trait - Added saving in local relation.
 
