@@ -1,3 +1,9 @@
+### 0.3.2
+Files trait - Added saving in local relation.
+
+### 0.3.1
+Table Data - Searching by relations.
+
 ### 0.3.0
 Files trait - Added saving of mime_type values.
 

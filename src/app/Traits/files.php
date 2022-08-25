@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Intervention\Image\ImageManagerStatic;
+use PatrykSawicki\Helper\app\Models\File;
 
 /*
  * Trait for saving files.
@@ -20,10 +21,10 @@ trait files
      * @param string $relationName e.g. files
      * @param int|null $max_width
      * @param int|null $max_height
+     * @param bool $externalRelation
      * @return Model
      */
-    public function addFile(UploadedFile $file, string $location='files', string $relationName='files',
-                            int $max_width=null, int $max_height=null): Model
+    public function addFile(UploadedFile $file, string $location='files', string $relationName='files', int $max_width=null, int $max_height=null, bool $externalRelation = true): Model
     {
         $fileName=$file->getClientOriginalName();
         $filePath='/'.config('filesSettings.main_dir', 'hidden').'/' . $location . '/' .
@@ -31,12 +32,26 @@ trait files
         $extension=explode('.', $fileName);
         $extension=strtolower($extension[count($extension)-1]);
 
-        $fileModel=$this->{$relationName}()->create([
-            'name'=>$fileName,
-            'type'=>$extension,
-            'mime_type'=>$file->getMimeType(),
-            'file'=>$filePath,
-        ]);
+        if($externalRelation)
+            $fileModel = $this->{$relationName}()->create([
+                'name' => $fileName,
+                'type' => $extension,
+                'mime_type' => $file->getMimeType(),
+                'file' => $filePath,
+            ]);
+        else
+        {
+            $fileModel = File::create([
+                'name' => $fileName,
+                'type' => $extension,
+                'mime_type' => $file->getMimeType(),
+                'file' => $filePath,
+            ]);
+
+            $this->update([
+                $relationName => $fileModel->id,
+            ]);
+        }
 
         $fileModel->update(['file'=>$filePath.$fileModel->id,]);
 
