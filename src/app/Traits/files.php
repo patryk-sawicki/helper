@@ -21,9 +21,10 @@ trait files
      * @param int|null $max_width
      * @param int|null $max_height
      * @param bool $externalRelation
+     * @param bool $forceWebP
      * @return Model
      */
-    public function addFile(UploadedFile $file, string $location='files', string $relationName='files', int $max_width=null, int $max_height=null, bool $externalRelation = true): Model
+    public function addFile(UploadedFile $file, string $location='files', string $relationName='files', int $max_width=null, int $max_height=null, bool $externalRelation = true, bool $forceWebP = true): Model
     {
         $fileName=$file->getClientOriginalName();
         $filePath='/'.config('filesSettings.main_dir', 'hidden').'/' . $location . '/' .
@@ -51,13 +52,25 @@ trait files
             $max_height??=config('filesSettings.images.max_height', 720);
             [$w, $h]=getimagesize($file->getRealPath());
 
-            if($w > $max_width || $h > $max_height)
+            if($w > $max_width || $h > $max_height || ($forceWebP && $extension != 'webp'))
             {
                 $image = ImageManagerStatic::make($file);
                 $image->resize($max_width, $max_height, function ($constraint) {
                     $constraint->aspectRatio();
                 });
-                Storage::put($filePath.$fileModel->id, (string) $image->encode());
+
+                $format = null;
+                if($forceWebP)
+                {
+                    $format = 'webp';
+                    $fileModel->update([
+                        'name' => str_replace('.'.$extension, '.webp', $fileName),
+                        'type' => $format,
+                        'mime_type' => 'image/webp',
+                    ]);
+                }
+
+                Storage::put($filePath.$fileModel->id, (string) $image->encode($format));
 
                 $fileModel->update([
                     'width' => $max_width,

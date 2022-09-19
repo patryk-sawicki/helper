@@ -1,3 +1,6 @@
+### 0.3.4
+Files trait - Forcing images to be converted to WebP has been added.
+
 ### 0.3.3
 Files trait - Added saving in local relation - fix.
 
