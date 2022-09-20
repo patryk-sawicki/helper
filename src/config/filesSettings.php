@@ -11,4 +11,6 @@ return [
         'auth' => 'admin',
         'permission' => 'file-management',
     ],
+
+    'block_webp_conversion' => env('FILES_SETTINGS_BLOCK_WEBP_CONVERSION', false),
 ];

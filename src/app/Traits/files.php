@@ -26,6 +26,9 @@ trait files
      */
     public function addFile(UploadedFile $file, string $location='files', string $relationName='files', int $max_width=null, int $max_height=null, bool $externalRelation = true, bool $forceWebP = true): Model
     {
+        if(config('filesSettings.block_webp_conversion') && $forceWebP)
+            $forceWebP = false;
+
         $fileName=$file->getClientOriginalName();
         $filePath='/'.config('filesSettings.main_dir', 'hidden').'/' . $location . '/' .
                   date('Y').'/'.date('m').'/'.date('d').'/';

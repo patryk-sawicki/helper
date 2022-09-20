@@ -1,3 +1,6 @@
+### 0.3.5
+Config - Added setting to block WebP conversion.
+
 ### 0.3.4
 Files trait - Forcing images to be converted to WebP has been added.
 
