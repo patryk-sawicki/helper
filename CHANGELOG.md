@@ -1,3 +1,6 @@
+### 0.3.6
+Files trait - Added a list of forbidden extensions for converting to WebP.
+
 ### 0.3.5
 Config - Added setting to block WebP conversion.
 
