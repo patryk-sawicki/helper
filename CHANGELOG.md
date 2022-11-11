@@ -1,3 +1,6 @@
+### 0.3.9.1
+Table Data - getTableRelations - Fix for no column's data, when running tests.
+
 ### 0.3.9
 Table Data - Added loading of needed relations after searching.
 

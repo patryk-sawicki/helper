@@ -41,6 +41,9 @@ trait tableData
      */
     public function getTableRelations(Request $request):array
     {
+        if(is_null($request->columns))
+            return [];
+
         $result = array_column(array_filter($request->columns, function ($column) {
             return str_contains($column['name'], '.');
         }), 'name');
