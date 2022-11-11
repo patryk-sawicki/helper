@@ -12,6 +12,27 @@ use function PHPUnit\Framework\stringEndsWith;
  * */
 trait tableData
 {
+    /**
+     * Get searching relations.
+     *
+     * @param Request $request
+     * @return array
+     */
+    public function getSearchingRelations(Request $request):array
+    {
+        $result = array_column(array_filter($request->columns, function ($column) {
+            return str_contains($column['name'], '.') && !is_null($column['search']['value']);
+        }), 'name');
+
+        foreach($result as $key => $value)
+        {
+            $temp = explode('.', $value);
+            $result[$key] = implode('.', array_slice($temp, 0, count($temp) - 1));
+        }
+
+        return array_unique($result);
+    }
+
     public function getTableData(Request $request, $elements, bool $sort=true):array
     {
         $start=$request->start ?? 0;

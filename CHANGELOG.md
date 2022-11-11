@@ -1,3 +1,6 @@
+### 0.3.7
+Table Data - Added getSearchingRelations function.
+
 ### 0.3.6
 Files trait - Added a list of forbidden extensions for converting to WebP.
 
