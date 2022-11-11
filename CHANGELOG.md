@@ -1,3 +1,6 @@
+### 0.3.8
+modelCache trait - Trait for using cache in models.
+
 ### 0.3.7
 Table Data - Added getSearchingRelations function.
 
