@@ -1,3 +1,6 @@
+### 0.3.9
+Table Data - Added loading of needed relations after searching.
+
 ### 0.3.8
 modelCache trait - Trait for using cache in models.
 

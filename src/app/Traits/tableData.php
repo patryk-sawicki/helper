@@ -33,6 +33,27 @@ trait tableData
         return array_unique($result);
     }
 
+    /**
+     * Get table relations.
+     *
+     * @param Request $request
+     * @return array
+     */
+    public function getTableRelations(Request $request):array
+    {
+        $result = array_column(array_filter($request->columns, function ($column) {
+            return str_contains($column['name'], '.');
+        }), 'name');
+
+        foreach($result as $key => $value)
+        {
+            $temp = explode('.', $value);
+            $result[$key] = implode('.', array_slice($temp, 0, count($temp) - 1));
+        }
+
+        return array_unique($result);
+    }
+
     public function getTableData(Request $request, $elements, bool $sort=true):array
     {
         $start=$request->start ?? 0;
@@ -41,6 +62,7 @@ trait tableData
         $sortColumn=(isset($request->order[0]['column']) ? $request->columns[$request->order[0]['column']]['name'] : 'id') ?? 'id';
         $draw=$request->draw ?? 1;
         $search=($request->has('search') && !empty($request->search['value'])) ? trim(json_encode(mb_strtolower($request->search['value'], 'UTF-8')), '"') : null;
+        $relations = $this->getTableRelations($request);
 
         $total=$elements->count();
 
@@ -83,6 +105,10 @@ trait tableData
 
         /*Take*/
         $elements=$elements->take($length);
+
+        /*Load relations*/
+        $elements->load($relations);
+
         return [$elements, $draw, $total, $filtered];
     }
 
