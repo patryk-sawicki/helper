@@ -18,7 +18,7 @@ trait modelCache
      * @param array $loadRelations List of relations to load.
      * @return Collection
      */
-    public static function getList(array $loadRelations): Collection
+    public static function getList(array $loadRelations = []): Collection
     {
         $cacheName = self::$cacheName ?? strtolower(str_replace('\\', '_', self::class));
 

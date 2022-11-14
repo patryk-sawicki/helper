@@ -1,3 +1,6 @@
+### 0.3.9.3
+modelCache trait - Default empty value.
+
 ### 0.3.9.2
 Table Data - getSearchingRelations - Fix for no column's data, when running tests.
 
