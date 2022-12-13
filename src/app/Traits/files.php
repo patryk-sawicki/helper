@@ -76,8 +76,8 @@ trait files
                 Storage::put($filePath.$fileModel->id, (string) $image->encode($format));
 
                 $fileModel->update([
-                    'width' => $max_width,
-                    'height' => $max_height,
+                    'width' => $image->width(),
+                    'height' => $image->height(),
                 ]);
 
                 return $fileModel;
