@@ -22,9 +22,10 @@ trait files
      * @param int|null $max_height
      * @param bool $externalRelation
      * @param bool $forceWebP
+     * @param bool $preventResizing
      * @return Model
      */
-    public function addFile(UploadedFile $file, string $location='files', string $relationName='files', int $max_width=null, int $max_height=null, bool $externalRelation = true, bool $forceWebP = true): Model
+    public function addFile(UploadedFile $file, string $location='files', string $relationName='files', int $max_width=null, int $max_height=null, bool $externalRelation = true, bool $forceWebP = true, bool $preventResizing = false): Model
     {
         $fileName = $file->getClientOriginalName();
         $filePath = '/'.config('filesSettings.main_dir', 'hidden').'/' . $location . '/' .
@@ -51,16 +52,18 @@ trait files
 
         if(explode('/', $file->getMimeType())[0]=='image')
         {
-            $max_width??=config('filesSettings.images.max_width', 1280);
-            $max_height??=config('filesSettings.images.max_height', 720);
+            $max_width ??= config('filesSettings.images.max_width', 1280);
+            $max_height ??= config('filesSettings.images.max_height', 720);
             [$w, $h]=getimagesize($file->getRealPath());
 
-            if($w > $max_width || $h > $max_height || ($forceWebP && $extension != 'webp'))
+            if((!$preventResizing && ($w > $max_width || $h > $max_height)) || ($forceWebP && $extension != 'webp'))
             {
                 $image = ImageManagerStatic::make($file);
-                $image->resize($max_width, $max_height, function ($constraint) {
-                    $constraint->aspectRatio();
-                });
+
+                if(!$preventResizing)
+                    $image->resize($max_width, $max_height, function ($constraint) {
+                        $constraint->aspectRatio();
+                    });
 
                 $format = null;
                 if($forceWebP)

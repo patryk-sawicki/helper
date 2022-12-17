@@ -1,3 +1,6 @@
+### 0.3.10.0
+Files trait - Added option to prevent resizes of images.
+
 ### 0.3.9.4
 Files trait - Fix for saving properly file sizes after resize.
 
