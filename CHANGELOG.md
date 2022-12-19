@@ -1,3 +1,6 @@
+### 0.3.11.0
+modelCache trait - Additional parameter and changed name of loadRelations parameter into withRelations.
+
 ### 0.3.10.0
 Files trait - Added option to prevent resizes of images.
 
