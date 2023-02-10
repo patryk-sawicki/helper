@@ -4,6 +4,7 @@
 namespace PatrykSawicki\Helper\app\Traits;
 
 
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use function PHPUnit\Framework\stringEndsWith;
 
@@ -126,6 +127,15 @@ trait tableData
         if(str_contains($colName, '.'))
         {
             [$model, $column['name']]=explode('.', $colName, 2);
+
+            if(!$item instanceof Model)
+            {
+                foreach($item as $el)
+                    if($this->filterTableData($el, $column, $colName))
+                        return true;
+                return false;
+            }
+
             return $this->filterTableData($item->{$model}, $column, $column['name']);
         }
 

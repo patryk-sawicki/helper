@@ -1,3 +1,6 @@
+### 0.3.12.0
+Table Data - filterTableData - Fix for search in multiple one-to-many relations.
+
 ### 0.3.11.0
 modelCache trait - Additional parameter and changed name of loadRelations parameter into withRelations.
 
