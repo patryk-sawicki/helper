@@ -1,3 +1,6 @@
+### 0.4.0.1
+Table Data - getCachedTableData - Fix for cache name.
+
 ### 0.4.0.0
 Table Data - New versions separated for searching in objects and classes.
 

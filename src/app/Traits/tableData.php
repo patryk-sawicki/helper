@@ -166,7 +166,7 @@ trait tableData
 
     public function getCachedTableData(Request $request, $class, bool $sort=true):array
     {
-        $cacheName = $class::$cacheName ?? strtolower(str_replace('\\', '_', $class::class));
+        $cacheName = $class::$cacheName ?? strtolower(str_replace('\\', '_', $class));
 
         return Cache::tags([$cacheName])
             ->remember($cacheName . '_' . $request->getContent() . '_' . $class . '_' . ($sort ? '1' : '0'), config('app.cache_default_ttl', 86400),
