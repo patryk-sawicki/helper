@@ -4,8 +4,10 @@
 namespace PatrykSawicki\Helper\app\Traits;
 
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use function PHPUnit\Framework\stringEndsWith;
 
 /*
@@ -61,7 +63,7 @@ trait tableData
         return array_unique($result);
     }
 
-    public function getTableData(Request $request, $elements, bool $sort=true):array
+    public function getTableDataForObjects(Request $request, $elements, bool $sort=true):array
     {
         $start=$request->start ?? 0;
         $length=$request->length ?? 100;
@@ -100,7 +102,7 @@ trait tableData
 
                 if ($column['searchable'] == 'true' && !empty($column['search']['value'])) {
                     $elements = $elements->filter(function ($item) use ($column, $colName) {
-                        return $this->filterTableData($item, $column, $colName);
+                        return $this->filterTableDataForObjects($item, $column, $colName);
                     });
                 }
             }
@@ -119,7 +121,7 @@ trait tableData
         return [$elements, $draw, $total, $filtered];
     }
 
-    protected function filterTableData($item, $column, $colName): bool
+    protected function filterTableDataForObjects($item, $column, $colName): bool
     {
         if(is_null($item))
             return false;
@@ -131,18 +133,18 @@ trait tableData
             if(!$item instanceof Model)
             {
                 foreach($item as $el)
-                    if($this->filterTableData($el, $column, $colName))
+                    if($this->filterTableDataForObjects($el, $column, $colName))
                         return true;
                 return false;
             }
 
-            return $this->filterTableData($item->{$model}, $column, $column['name']);
+            return $this->filterTableDataForObjects($item->{$model}, $column, $column['name']);
         }
 
         if(is_countable($item))
         {
             foreach($item as $el)
-                if($this->filterTableData($el, $column, $colName))
+                if($this->filterTableDataForObjects($el, $column, $colName))
                     return true;
 
             return false;
@@ -160,5 +162,101 @@ trait tableData
                 str_contains(strip_tags($testValue), mb_strtolower($value2, 'UTF-8')) ||
                 (is_object($item->{$colName}) && str_contains(strip_tags(strtolower($item->{$colName}->toJson())), $value)) ||
                 (is_object($item->{$colName}) && str_contains(strip_tags($item->{$colName}->toJson()), $value3)));
+    }
+
+    public function getCachedTableData(Request $request, $class, bool $sort=true):array
+    {
+        $cacheName = $class::$cacheName ?? strtolower(str_replace('\\', '_', $class::class));
+
+        return Cache::tags([$cacheName])
+            ->remember($cacheName . '_' . $request->getContent() . '_' . $class . '_' . ($sort ? '1' : '0'), config('app.cache_default_ttl', 86400),
+                function() use ($request, $class, $sort) {
+                    return $this->getTableData($request, $class, $sort);
+                });
+    }
+
+    public function getTableData(Request $request, $class, bool $sort=true):array
+    {
+        $start = $request->start ?? 0;
+        $length = $request->length ?? 100;
+        $sortDir = $request->order[0]['dir'] ?? 'asc';
+        $sortColumn = (isset($request->order[0]['column']) ? $request->columns[$request->order[0]['column']]['name'] : 'id') ?? 'id';
+        $draw = $request->draw ?? 1;
+        $search = ($request->has('search') && !empty($request->search['value'])) ? trim(json_encode(mb_strtolower($request->search['value'], 'UTF-8')), '"') : null;
+        $relations = $this->getTableRelations($request);
+
+        $total = $class::count();
+
+        $query = $class::query();
+
+        /*Sort*/
+        if($sort)
+            ($sortDir == 'asc') ? $query->orderBy($sortColumn) : $query->orderByDesc($sortColumn);
+
+        /*Search*/
+        if(!is_null($search))
+        {
+            $query->where(function(Builder $query) use ($request, $search) {
+                foreach ($request->columns as $column)
+                {
+                    if($column['searchable'] == '1')
+                    {
+                        $colName = $column['name'];
+                        logger($colName);
+                        logger($column);
+
+                        $query->orWhere(function(Builder $query) use ($colName, $search) {
+                            $this->filterQueryTableData($query, $colName, $search);
+                        });
+                    }
+                }
+            });
+        }
+
+        /*Column Search*/
+        if($request->has('columns'))
+            foreach ($request->columns as $column)
+            {
+                $colName = $column['name'];
+                $value = trim($column['search']['value']);
+
+                if ($column['searchable'] == '1' && !empty($value)) {
+                    $query->where(function(Builder $query) use ($colName, $value) {
+                        $this->filterQueryTableData($query, $colName, $value);
+                    });
+                }
+            }
+
+        $filtered = $query->count();
+
+        /*Start*/
+        $query->skip($start);
+
+        /*Take*/
+        $query->limit($length);
+
+        /*Get*/
+        $elements = $query->get();
+
+        /*Load relations*/
+        $elements->load($relations);
+
+        return [$elements, $draw, $total, $filtered];
+    }
+
+    protected function filterQueryTableData(&$query, $colName, $value)
+    {
+        if(!str_contains($colName, '.'))
+        {
+            $query->where($colName, 'like', '%'.$value.'%');
+            return;
+        }
+
+        $route = substr($colName, 0, strrpos($colName, '.'));
+        $colName = substr($colName, strrpos($colName, '.')+1);
+
+        $query->whereHas($route, function($query) use ($colName, $value) {
+            $query->where($colName, 'like', '%'.$value.'%');
+        });
     }
 }

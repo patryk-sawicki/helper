@@ -1,3 +1,6 @@
+### 0.4.0.0
+Table Data - New versions separated for searching in objects and classes.
+
 ### 0.3.12.0
 Table Data - filterTableData - Fix for search in multiple one-to-many relations.
 
