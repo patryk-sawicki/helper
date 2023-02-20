@@ -1,3 +1,6 @@
+### 0.4.0.2
+Laravel 10 support.
+
 ### 0.4.0.1
 Table Data - getCachedTableData - Fix for cache name.
 
