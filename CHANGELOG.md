@@ -1,3 +1,7 @@
+### 0.4.0.3
+Table Data - getTableData - Added support for scopes.
+Table Data - getCachedTableData - Added cache name modifier.
+
 ### 0.4.0.2
 Laravel 10 support.
 

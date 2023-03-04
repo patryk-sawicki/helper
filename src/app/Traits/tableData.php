@@ -164,18 +164,18 @@ trait tableData
                 (is_object($item->{$colName}) && str_contains(strip_tags($item->{$colName}->toJson()), $value3)));
     }
 
-    public function getCachedTableData(Request $request, $class, bool $sort=true):array
+    public function getCachedTableData(Request $request, $class, bool $sort=true, array $scopes = [], string $cacheNameModifier = ''):array
     {
         $cacheName = $class::$cacheName ?? strtolower(str_replace('\\', '_', $class));
 
         return Cache::tags([$cacheName])
-            ->remember($cacheName . '_' . $request->getContent() . '_' . $class . '_' . ($sort ? '1' : '0'), config('app.cache_default_ttl', 86400),
-                function() use ($request, $class, $sort) {
-                    return $this->getTableData($request, $class, $sort);
+            ->remember($cacheName . '_' . $request->getContent() . '_' . $class . '_' . ($sort ? '1' : '0')  . '_' . implode('_', $scopes) . '_' .$cacheNameModifier, config('app.cache_default_ttl', 86400),
+                function() use ($request, $class, $sort, $scopes) {
+                    return $this->getTableData($request, $class, $sort, $scopes);
                 });
     }
 
-    public function getTableData(Request $request, $class, bool $sort=true):array
+    public function getTableData(Request $request, $class, bool $sort=true, array $scopes = []):array
     {
         $start = $request->start ?? 0;
         $length = $request->length ?? 100;
@@ -226,6 +226,10 @@ trait tableData
                     });
                 }
             }
+
+        /*Scopes*/
+        foreach ($scopes as $scope)
+            $query->{$scope}();
 
         $filtered = $query->count();
 
