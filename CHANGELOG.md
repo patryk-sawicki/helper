@@ -1,3 +1,6 @@
+### 0.4.1.3
+uploads - trait - Regenerate thumbnails function.
+
 ### 0.4.1.2
 uploads - trait - Fix for maximum thumbnails sizes.
 
