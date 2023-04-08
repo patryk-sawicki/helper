@@ -1,3 +1,6 @@
+### 0.4.1.1
+uploads - trait - Fix for using files trait.
+
 ### 0.4.1.0
 uploads - trait.
 

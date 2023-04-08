@@ -8,6 +8,8 @@ use PatrykSawicki\Helper\app\Traits\files;
 
 trait uploads
 {
+    use files;
+
     /**
      * Add image.
      *
