@@ -41,7 +41,10 @@ trait uploads
             $file->categories()->sync($categories);
 
         foreach(config('filesSettings.thumbnailSizes', []) as $thumbnailSize)
-            $file->addFile($uploadedFile, $location, 'thumbnails', $thumbnailSize['width'], $thumbnailSize['height']);
+        {
+            if($file->width > $thumbnailSize['width'] && $file->height > $thumbnailSize['height'])
+                $file->addFile($uploadedFile, $location, 'thumbnails', $thumbnailSize['width'], $thumbnailSize['height']);
+        }
 
         return $file;
     }

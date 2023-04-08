@@ -1,3 +1,6 @@
+### 0.4.1.2
+uploads - trait - Fix for maximum thumbnails sizes.
+
 ### 0.4.1.1
 uploads - trait - Fix for using files trait.
 
