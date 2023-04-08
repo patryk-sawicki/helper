@@ -5,6 +5,21 @@ return [
         'max_height' => 720,
     ],
 
+    'thumbnailSizes' => [
+        [
+            'width' => 64,
+            'height' => 64
+        ],
+        [
+            'width' => 374,
+            'height' => null
+        ],
+        [
+            'width' => 1088,
+            'height' => null
+        ],
+    ],
+
     'main_dir' => 'hidden',
 
     'middleware' => [

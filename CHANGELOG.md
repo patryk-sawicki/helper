@@ -1,3 +1,6 @@
+### 0.4.1.0
+uploads - trait.
+
 ### 0.4.0.3
 Table Data - getTableData - Added support for scopes.
 Table Data - getCachedTableData - Added cache name modifier.
