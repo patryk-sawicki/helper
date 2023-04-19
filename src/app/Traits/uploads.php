@@ -21,14 +21,18 @@ trait uploads
      * @param int|null $max_width
      * @param int|null $max_height
      * @param bool $externalRelation
+     * @param array $options
      * @return Model
      */
-    public function addUpload(UploadedFile $uploadedFile, string $location='uploads', string $relationName='files', array $categories=[], int $max_width=null, int $max_height=null, bool $externalRelation = true): Model
+    public function addUpload(UploadedFile $uploadedFile, string $location='uploads', string $relationName='files',
+        array $categories=[], int $max_width=null, int $max_height=null, bool $externalRelation = true, array $options=[])
+    : Model
     {
         if(explode('/', $uploadedFile->getMimeType())[0] != 'image' ||
            str_contains($uploadedFile->getMimeType(), 'svg'))
         {
-            $file=$this->addFile($uploadedFile, $location, $relationName, $max_width, $max_height, $externalRelation);
+            $file=$this->addFile(file: $uploadedFile, location: $location, relationName: $relationName,
+                max_width: $max_width, max_height: $max_height, externalRelation: $externalRelation, options: $options);
 
             if(!empty($categories))
                 $file->categories()->sync($categories);
@@ -36,7 +40,8 @@ trait uploads
             return $file;
         }
 
-        $file=$this->addFile($uploadedFile, $location, $relationName, $max_width, $max_height, $externalRelation);
+        $file=$this->addFile(file: $uploadedFile, location: $location, relationName: $relationName,
+            max_width: $max_width, max_height: $max_height, externalRelation: $externalRelation, options: $options);
 
         if(!empty($categories))
             $file->categories()->sync($categories);
@@ -44,7 +49,8 @@ trait uploads
         foreach(config('filesSettings.thumbnailSizes', []) as $thumbnailSize)
         {
             if($file->width > $thumbnailSize['width'] && $file->height > $thumbnailSize['height'])
-                $file->addFile($uploadedFile, $location, 'thumbnails', $thumbnailSize['width'], $thumbnailSize['height']);
+                $file->addFile(file: $uploadedFile, location: $location, relationName: 'thumbnails',
+                    max_width: $thumbnailSize['width'], max_height: $thumbnailSize['height'], options: $options);
         }
 
         return $file;

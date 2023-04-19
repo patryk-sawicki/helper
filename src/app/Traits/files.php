@@ -23,9 +23,11 @@ trait files
      * @param bool $externalRelation
      * @param bool $forceWebP
      * @param bool $preventResizing
+     * @param array $options
      * @return Model
      */
-    public function addFile(UploadedFile $file, string $location='files', string $relationName='files', int $max_width=null, int $max_height=null, bool $externalRelation = true, bool $forceWebP = true, bool $preventResizing = false): Model
+    public function addFile(UploadedFile $file, string $location='files', string $relationName='files', int
+    $max_width=null, int $max_height=null, bool $externalRelation = true, bool $forceWebP = true, bool $preventResizing = false, array $options=[]): Model
     {
         $fileName = $file->getClientOriginalName();
         $filePath = '/'.config('filesSettings.main_dir', 'hidden').'/' . $location . '/' .
@@ -79,10 +81,7 @@ trait files
                 Storage::put(
                     $filePath.$fileModel->id,
                     (string) $image->encode($format),
-                    [
-                    'visibility' => 'public',
-                    'directory_visibility' => 'public'
-                    ]
+                    $options
                 );
 
                 $fileModel->update([
@@ -102,10 +101,7 @@ trait files
         $file->storeAs(
             $filePath,
             $fileModel->id,
-            [
-                'visibility' => 'public',
-                'directory_visibility' => 'public'
-            ]
+            $options
         );
         return $fileModel;
     }
