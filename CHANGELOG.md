@@ -1,3 +1,6 @@
+## 0.4.1.4
+files - change folder and files permissions 
+
 ### 0.4.1.3
 uploads - trait - Regenerate thumbnails function.
 

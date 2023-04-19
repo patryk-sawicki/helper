@@ -76,7 +76,14 @@ trait files
                     ]);
                 }
 
-                Storage::put($filePath.$fileModel->id, (string) $image->encode($format));
+                Storage::put(
+                    $filePath.$fileModel->id,
+                    (string) $image->encode($format),
+                    [
+                    'visibility' => 'public',
+                    'directory_visibility' => 'public'
+                    ]
+                );
 
                 $fileModel->update([
                     'width' => $image->width(),
@@ -92,7 +99,14 @@ trait files
                 ]);
         }
 
-        $file->storeAs($filePath, $fileModel->id);
+        $file->storeAs(
+            $filePath,
+            $fileModel->id,
+            [
+                'visibility' => 'public',
+                'directory_visibility' => 'public'
+            ]
+        );
         return $fileModel;
     }
 
