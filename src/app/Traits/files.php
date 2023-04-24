@@ -52,7 +52,7 @@ trait files
 
         $fileModel->update(['file'=>$filePath.$fileModel->id,]);
 
-        if(explode('/', $file->getMimeType())[0]=='image')
+        if(explode('/', $file->getMimeType())[0]=='image' && !str_contains($file->getMimeType(), 'svg'))
         {
             $max_width ??= config('filesSettings.images.max_width', 1280);
             $max_height ??= config('filesSettings.images.max_height', 720);
