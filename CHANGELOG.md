@@ -1,3 +1,6 @@
+### 0.4.1.6
+tableData - Fix for searching in objects.
+
 ## 0.4.1.5
 refactor: files - change folder and files permissions
 

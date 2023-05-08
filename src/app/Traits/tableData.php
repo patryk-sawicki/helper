@@ -100,7 +100,7 @@ trait tableData
             {
                 $colName=$column['name'];
 
-                if ($column['searchable'] == 'true' && !empty($column['search']['value'])) {
+                if ($column['searchable'] && !empty($column['search']['value'])) {
                     $elements = $elements->filter(function ($item) use ($column, $colName) {
                         return $this->filterTableDataForObjects($item, $column, $colName);
                     });
