@@ -1,4 +1,4 @@
-### 0.4.1.6
+### 0.4.1.7
 tableData - Fix for searching in objects.
 
 ### 0.4.1.5
