@@ -64,10 +64,10 @@ trait uploads
      * @param string $relationName e.g. files
      * @param array $categories
      */
-    public function addUploads(array $files, string $location='uploads', string $relationName='files', array $categories=[]): void
+    public function addUploads(array $files, string $location='uploads', string $relationName='files', array $categories=[], array $options=[]): void
     {
         foreach($files as $file)
-            $this->addUpload($file, $location, $relationName, $categories);
+            $this->addUpload($file, $location, $relationName, $categories, options: $options);
     }
 
     /**

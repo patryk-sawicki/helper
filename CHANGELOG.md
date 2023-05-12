@@ -1,3 +1,6 @@
+### 0.4.1.8
+tableData - uploads - Fix for options.
+
 ### 0.4.1.7
 tableData - Fix for searching in objects.
 
