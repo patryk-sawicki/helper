@@ -1,3 +1,6 @@
+### 0.4.1.10
+tableData - files - Fix for Amazon S3.
+
 ### 0.4.1.9
 tableData - files - Fix for using storage.
 
