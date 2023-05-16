@@ -1,3 +1,6 @@
+### 0.4.1.9
+tableData - files - Fix for using storage.
+
 ### 0.4.1.8
 tableData - uploads - Fix for options.
 

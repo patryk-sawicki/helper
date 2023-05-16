@@ -98,10 +98,10 @@ trait files
                 ]);
         }
 
-        $file->storeAs(
+        Storage::putFileAs(
             $filePath,
-            $fileModel->id,
-            $options
+            $file,
+            $fileModel->id
         );
         return $fileModel;
     }
