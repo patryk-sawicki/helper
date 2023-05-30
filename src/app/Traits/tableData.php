@@ -84,9 +84,9 @@ trait tableData
         {
             $elements=$elements->filter(function ($item) use ($request, $search) {
                 $test=mb_strtolower($item->__toString(), 'UTF-8');
-                $value=trim(json_encode(mb_strtolower($request->search['value'], 'UTF-8')), '"');
-                $value2=trim(mb_strtolower($request->search['value'], 'UTF-8'), '"');
-                $value3=trim(json_encode(mb_strtoupper($request->search['value'], 'UTF-8')), '"');
+                $value=trim(json_encode(mb_strtolower($request->search['value'] ?? '', 'UTF-8')), '"');
+                $value2=trim(mb_strtolower($request->search['value'] ?? '', 'UTF-8'), '"');
+                $value3=trim(json_encode(mb_strtoupper($request->search['value'] ?? '', 'UTF-8')), '"');
                 return (str_contains(strip_tags($test), mb_strtolower($value, 'UTF-8')) ||
                         str_contains(strip_tags($test), mb_strtolower($value2, 'UTF-8')) ||
                         str_contains(strip_tags(strtolower($item->toJson())), $value) ||
@@ -154,9 +154,9 @@ trait tableData
             mb_strtolower($item->{trim($colName, '()')}(), 'UTF-8') :
             mb_strtolower($item->{$colName}, 'UTF-8');
 
-        $value = trim(json_encode(mb_strtolower($column['search']['value'], 'UTF-8')), '"');
-        $value2 = trim(mb_strtolower($column['search']['value'], 'UTF-8'), '"');
-        $value3 = trim(json_encode(mb_strtoupper($column['search']['value'], 'UTF-8')), '"');
+        $value = trim(json_encode(mb_strtolower($column['search']['value'] ?? '', 'UTF-8')), '"');
+        $value2 = trim(mb_strtolower($column['search']['value'] ?? '', 'UTF-8'), '"');
+        $value3 = trim(json_encode(mb_strtoupper($column['search']['value'] ?? '', 'UTF-8')), '"');
 
         return (str_contains(strip_tags($testValue), mb_strtolower($value, 'UTF-8')) ||
                 str_contains(strip_tags($testValue), mb_strtolower($value2, 'UTF-8')) ||
@@ -218,7 +218,7 @@ trait tableData
             foreach ($request->columns as $column)
             {
                 $colName = $column['name'];
-                $value = trim($column['search']['value']);
+                $value = trim($column['search']['value'] ?? '');
 
                 if ($column['searchable'] == '1' && !empty($value)) {
                     $query->where(function(Builder $query) use ($colName, $value) {

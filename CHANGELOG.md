@@ -1,3 +1,6 @@
+### 0.4.1.11
+tableData - Changes for deprecated in PHP 8.2.
+
 ### 0.4.1.10
 tableData - files - Fix for Amazon S3.
 
