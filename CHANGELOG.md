@@ -1,3 +1,6 @@
+### 0.4.1.12
+Laravel 11 support.
+
 ### 0.4.1.11
 tableData - Changes for deprecated in PHP 8.2.
 
