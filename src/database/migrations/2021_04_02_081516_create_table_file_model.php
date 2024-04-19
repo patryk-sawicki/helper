@@ -1,6 +1,6 @@
 <?php
 
-use App\Models\File;
+use App\Models\BaseFile;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -15,7 +15,7 @@ class CreateTableFileModel extends Migration
     public function up()
     {
         Schema::create('fileables', function (Blueprint $table) {
-            $table->foreignIdFor(File::class)->constrained();
+            $table->foreignIdFor(BaseFile::class)->constrained();
 
             $table->string('fileable_type', 255)->nullable()->default(null)->index();
             $table->bigInteger('fileable_id')->unsigned()->nullable()->default(null)->index();

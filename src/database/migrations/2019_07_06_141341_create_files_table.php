@@ -25,7 +25,10 @@ class CreateFilesTable extends Migration
             $table->smallInteger('height')->unsigned()->nullable()->default(null)->index();
             $table->index(['width', 'height']);
 
-            $table->string('model_type', 255)->nullable()->default(null)->index();
+            $table->string('protected_type', 255)->nullable()->default(null)->index();
+            $table->bigInteger('protected_id')->unsigned()->nullable()->default(null)->index();
+
+            $table->string('model_type', 200)->nullable()->default(null)->index();
             $table->bigInteger('model_id')->unsigned()->nullable()->default(null)->index();
             $table->index(['model_type', 'model_id']);
 

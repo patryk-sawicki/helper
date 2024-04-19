@@ -1,3 +1,6 @@
+### 0.5.0.0
+Changes in files class and upgraded intervention/image.
+
 ### 0.4.1.12
 Laravel 11 support.
 

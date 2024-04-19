@@ -5,7 +5,9 @@ namespace PatrykSawicki\Helper\app\Traits;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
-use Intervention\Image\ImageManagerStatic;
+use Intervention\Image\Drivers\Gd\Driver;
+use Intervention\Image\Encoders\WebpEncoder;
+use Intervention\Image\ImageManager;
 
 /*
  * Trait for saving files.
@@ -63,7 +65,9 @@ trait files
 
             if((!$preventResizing && ($w > $max_width || $h > $max_height)) || ($forceWebP && $extension != 'webp'))
             {
-                $image = ImageManagerStatic::make($file);
+//                $image = ImageManager::make($file);
+                $manager = new ImageManager(new Driver());
+                $image = $manager->read($file);
 
                 if(!$preventResizing)
                     $image->resize($max_width, $max_height, function ($constraint) {
@@ -73,10 +77,10 @@ trait files
                 $format = null;
                 if($forceWebP)
                 {
-                    $format = 'webp';
+                    $format = new WebpEncoder();
                     $fileModel->update([
                         'name' => str_replace('.'.$extension, '.webp', $fileName),
-                        'type' => $format,
+                        'type' => 'webp',
                         'mime_type' => 'image/webp',
                     ]);
                 }
