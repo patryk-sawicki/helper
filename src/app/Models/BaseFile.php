@@ -137,4 +137,9 @@ abstract class BaseFile extends Model
 
         return '<img src="'.$this->url().'" srcset="'.$this->srcset().'" sizes="(max-width: '.$width.'px) 100vw, '.$width.'px" '.$class.' alt="'.$alt.'" style="'.$style.'" loading="'.$loading.'" width="'.$thumbnail->width.'" height="'.$thumbnail->height.'">';
     }
+
+    public function scopeMainFile(Builder $query, $fileClass): Builder
+    {
+        return $query->whereNull('model_type')->orWhere('model_type','!=', $fileClass);
+    }
 }

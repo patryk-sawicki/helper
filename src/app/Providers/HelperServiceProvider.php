@@ -3,6 +3,8 @@
 namespace PatrykSawicki\Helper\app\Providers;
 
 use Illuminate\Support\ServiceProvider;
+use PatrykSawicki\Helper\app\Console\Commands\FilesRebuildCommand;
+
 class HelperServiceProvider extends ServiceProvider
 {
     /**
@@ -32,5 +34,8 @@ class HelperServiceProvider extends ServiceProvider
     {
         $path = realpath($raw = __DIR__ . '/../../');
         $this->mergeConfigFrom($path . '/config/filesSettings.php', 'filesSettings');
+
+        /*Add FilesRebuildCommand*/
+        $this->commands(FilesRebuildCommand::class);
     }
 }

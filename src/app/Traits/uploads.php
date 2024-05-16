@@ -5,6 +5,11 @@ namespace PatrykSawicki\Helper\app\Traits;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Intervention\Image\Drivers\Gd\Driver;
+use Intervention\Image\Encoders\WebpEncoder;
+use Intervention\Image\ImageManager;
 use PatrykSawicki\Helper\app\Traits\files;
 
 trait uploads
@@ -73,13 +78,13 @@ trait uploads
     /**
      * Regenerate thumbnails.
      */
-    public function regenerateThumbnails(string $filesModel, string $location='uploads'): void
+    public function regenerateThumbnails(string $filesClass, string $location='uploads'): void
     {
         $thumbnailSizes = config('filesSettings.thumbnailSizes', []);
         $thumbnailSizes = collect($thumbnailSizes);
 
         /*Remove old, not currently needed thumbnails.*/
-        $thumbnails = $filesModel::where('model_type', $filesModel)->get();
+        $thumbnails = $filesClass::where('model_type', $filesClass)->get();
         foreach($thumbnails as $thumbnail)
         {
             $thumbnailSize = $thumbnailSizes->where('width', $thumbnail->width)->where('height', $thumbnail->height)->first();
@@ -90,9 +95,8 @@ trait uploads
                 $thumbnail->delete();
         }
 
-        $files = $filesModel::where(function(Builder $query) use ($filesModel) {
-            $query->where('model_type', '!=', $filesModel)->orWhereNull('model_type');
-        })->where('mime_type', 'like', '%image%')->where('mime_type', 'not like', '%svg%')->get();
+        $files = $filesClass::mainFile(fileClass: $filesClass)
+            ->where('mime_type', 'like', '%image%')->where('mime_type', 'not like', '%svg%')->get();
 
         foreach($files as $file)
         {
@@ -116,9 +120,78 @@ trait uploads
             {
                 if(($file->thumbnails->count() == 0 || ($file->thumbnails->where('width', $thumbnailSize['width'])->count() == 0 && $file->thumbnails->where('height', $thumbnailSize['height'])->count() == 0)) && ((is_null($thumbnailSize['width']) || $thumbnailSize['width'] < $fileWidth) && (is_null($thumbnailSize['height']) || $thumbnailSize['height'] < $fileHeight)))
                 {
-                    $file->addFile($uploadedFile, $location, 'thumbnails', $thumbnailSize['width'], $thumbnailSize['height']);
+                    $file->addFile(file: $uploadedFile, location: $location, relationName: 'thumbnails',
+                        max_width: $thumbnailSize['width'], max_height: $thumbnailSize['height']);
                 }
             }
         }
+    }
+    
+    public function rebuildFiles(string $filesClass, bool $forceWebP = true, array $options=[])
+    {
+        if(strtolower(config('filesystems.default')) == 's3')
+            $options = [];
+        
+        if($forceWebP && config('filesSettings.block_webp_conversion'))
+            $forceWebP = false;
+        
+        $files = $filesClass::mainFile(fileClass: $filesClass)->whereNull('mime_type')->orWhere('mime_type', '!=', 'image/webp')->get();
+        
+        foreach($files as $file)
+        {
+            $filePath = storage_path('app' . $file->file);
+            
+            /*Check if file exist.*/
+            if(!file_exists($filePath))
+                continue;
+
+            DB::beginTransaction();
+
+            $extension = $file->type;
+            
+            if($forceWebP && in_array($extension, config('filesSettings.forbidden_webp_extensions')))
+                $forceWebP = false;
+            
+            $uploadedFile = new UploadedFile(
+                $filePath,
+                $file->name,
+                $file->mime_type,
+                0,
+                true
+            );
+            
+            if($forceWebP && $extension != 'webp' &&
+               (explode('/', $uploadedFile->getMimeType())[0]=='image' && !str_contains($uploadedFile->getMimeType(), 'svg')))
+            {
+                $format = new WebpEncoder();
+                $file->update([
+                    'name' => str_replace('.'.$extension, '.webp', $file->name),
+                    'type' => 'webp',
+                    'mime_type' => 'image/webp',
+                ]);
+
+                $manager = new ImageManager(new Driver());
+                $image = $manager->read($uploadedFile);
+
+                /*Remove old file*/
+                Storage::delete($file->file);
+
+                Storage::put(
+                    $file->file,
+                    (string) $image->encode($format),
+                    $options
+                );
+            }
+            elseif (empty($file->mime_type))
+            {
+                $file->update([
+                    'mime_type' => $uploadedFile->getMimeType(),
+                ]);
+            }
+
+            DB::commit();
+        }
+
+        $this->regenerateThumbnails(filesClass: $filesClass);
     }
 }

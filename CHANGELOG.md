@@ -1,3 +1,6 @@
+### 0.5.1.0
+Command for rebuilding files with webp and thumbnails.
+
 ### 0.5.0.0
 Changes in files class and upgraded intervention/image.
 
