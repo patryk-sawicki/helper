@@ -151,8 +151,10 @@ abstract class BaseFile extends Model
             $class = 'class="' . $class . '"';
         }
 
+        $sizes = !is_null($width) ? 'sizes="(max-width: ' . $width . 'px) 100vw, ' . $width . 'px"' : '';
+
         return '<img src="' . $this->url() . '" srcset="' . $this->srcset(
-            ) . '" sizes="(max-width: ' . $width . 'px) 100vw, ' . $width . 'px" ' . $class . ' alt="' . $alt . '" style="' . $style . '" loading="' . $loading . '" width="' . $thumbnail->width . '" height="' . $thumbnail->height . '" fetchpriority="' . $fetchPriority . '">';
+            ) . '" ' . $sizes . ' ' . $class . ' alt="' . $alt . '" style="' . $style . '" loading="' . $loading . '" width="' . $thumbnail->width . '" height="' . $thumbnail->height . '" fetchpriority="' . $fetchPriority . '">';
     }
 
     public function scopeMainFile(Builder $query, $fileClass): Builder

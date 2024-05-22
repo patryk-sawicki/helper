@@ -1,3 +1,7 @@
+### 0.5.1.4
+
+BaseFile – img – Fix for sizes.
+
 ### 0.5.1.3
 
 BaseFile – Fix.
