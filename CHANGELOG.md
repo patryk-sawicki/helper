@@ -1,3 +1,7 @@
+### 0.5.1.3
+
+BaseFile – Fix.
+
 ### 0.5.1.2
 
 BaseFile – Fix for finding thumbnails.

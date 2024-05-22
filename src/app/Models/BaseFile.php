@@ -133,7 +133,7 @@ abstract class BaseFile extends Model
      * @return string
      */
     public function img(
-        ?int $width,
+        ?int $width = null,
         ?int $height = null,
         ?string $class = null,
         ?string $alt = null,
