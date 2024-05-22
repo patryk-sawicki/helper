@@ -25,7 +25,7 @@ abstract class BaseFile extends Model
 
     protected $table = 'files';
 
-    protected $fillable=[
+    protected $fillable = [
         'name',
         'type',
         'mime_type',
@@ -49,7 +49,7 @@ abstract class BaseFile extends Model
 
     public function url(): string
     {
-        return '/file/'.$this->id;
+        return '/file/' . $this->id;
     }
 
     public function fullUrl(): string
@@ -74,34 +74,37 @@ abstract class BaseFile extends Model
 
     public function canBeDeleted(): bool
     {
-        foreach($this->protectedRelations as $relation)
-            if($this->{$relation}->count() > 0)
+        foreach ($this->protectedRelations as $relation) {
+            if ($this->{$relation}->count() > 0) {
                 return false;
+            }
+        }
 
         return true;
     }
 
-    public function thumbnail($width, $height=null)
+    public function thumbnail($width, $height = null)
     {
         $thumbnails = $this->thumbnails;
 
-        if(!is_null($width))
+        if (!is_null($width)) {
             $thumbnails = $thumbnails->where('width', '=', $width);
+        }
 
-        if(!is_null($height))
+        if (!is_null($height)) {
             $thumbnails = $thumbnails->where('height', '=', $height);
+        }
 
         return $thumbnails->first() ?? $this;
     }
 
-    public function icon($width, $height=null): string
+    public function icon($width, $height = null): string
     {
-        if(explode('/', $this->mime_type)[0] === 'image')
-        {
+        if (explode('/', $this->mime_type)[0] === 'image') {
             return $this->thumbnail($width, $height);
         }
 
-        return '/img/icons/'.$this->type.'.svg';
+        return '/img/icons/' . $this->type . '.svg';
     }
 
     /**
@@ -111,8 +114,9 @@ abstract class BaseFile extends Model
     {
         $srcset = $this->url() . ' ' . $this->width . 'w';
 
-        foreach($this->thumbnails as $thumbnail)
+        foreach ($this->thumbnails as $thumbnail) {
             $srcset .= ', ' . $thumbnail->url() . ' ' . $thumbnail->width . 'w';
+        }
 
         return $srcset;
     }
@@ -128,18 +132,31 @@ abstract class BaseFile extends Model
      * @param string $loading
      * @return string
      */
-    public function img(?int $width = 1920, ?int $height = null, ?string $class = null, ?string $alt = null, ?string $style = null, string $loading = 'lazy'): string
-    {
+    public function img(
+        ?int $width,
+        ?int $height = null,
+        ?string $class = null,
+        ?string $alt = null,
+        ?string $style = null,
+        string $loading = 'lazy',
+        string $fetchPriority = 'auto'
+    ): string {
+        if (is_null($width) && is_null($height)) {
+            $width = 1920;
+        }
+
         $thumbnail = $this->thumbnail($width, $height);
 
-        if(!is_null($class))
-            $class = 'class="'.$class.'"';
+        if (!is_null($class)) {
+            $class = 'class="' . $class . '"';
+        }
 
-        return '<img src="'.$this->url().'" srcset="'.$this->srcset().'" sizes="(max-width: '.$width.'px) 100vw, '.$width.'px" '.$class.' alt="'.$alt.'" style="'.$style.'" loading="'.$loading.'" width="'.$thumbnail->width.'" height="'.$thumbnail->height.'">';
+        return '<img src="' . $this->url() . '" srcset="' . $this->srcset(
+            ) . '" sizes="(max-width: ' . $width . 'px) 100vw, ' . $width . 'px" ' . $class . ' alt="' . $alt . '" style="' . $style . '" loading="' . $loading . '" width="' . $thumbnail->width . '" height="' . $thumbnail->height . '" fetchpriority="' . $fetchPriority . '">';
     }
 
     public function scopeMainFile(Builder $query, $fileClass): Builder
     {
-        return $query->whereNull('model_type')->orWhere('model_type','!=', $fileClass);
+        return $query->whereNull('model_type')->orWhere('model_type', '!=', $fileClass);
     }
 }
