@@ -1,3 +1,6 @@
+### 0.5.1.1
+files – trait – Fix for resizing images.
+
 ### 0.5.1.0
 Command for rebuilding files with webp and thumbnails.
 

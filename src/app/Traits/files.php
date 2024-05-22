@@ -70,9 +70,7 @@ trait files
                 $image = $manager->read($file);
 
                 if(!$preventResizing)
-                    $image->resize($max_width, $max_height, function ($constraint) {
-                        $constraint->aspectRatio();
-                    });
+                    $image->scale(width: $max_width, height: $max_height);
 
                 $format = null;
                 if($forceWebP)
