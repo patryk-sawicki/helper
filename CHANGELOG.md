@@ -1,3 +1,7 @@
+### 0.5.1.6
+
+BaseFile – Added function findBySlug.
+
 ### 0.5.1.5
 
 files – trait – Added slug.

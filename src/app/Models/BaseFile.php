@@ -162,4 +162,9 @@ abstract class BaseFile extends Model
     {
         return $query->whereNull('model_type')->orWhere('model_type', '!=', $fileClass);
     }
+
+    public static function findBySlug(string $slug): ?self
+    {
+        return self::where('slug', '=', $slug)->first();
+    }
 }
