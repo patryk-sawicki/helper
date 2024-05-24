@@ -17,6 +17,7 @@ class CreateFilesTable extends Migration
             $table->id();
 
             $table->string('name', 127);
+            $table->string('slug', 127)->unique();
             $table->string('type', 7);
             $table->string('mime_type', 63);
             $table->string('file', 255);

@@ -27,6 +27,7 @@ abstract class BaseFile extends Model
 
     protected $fillable = [
         'name',
+        'slug',
         'type',
         'mime_type',
         'file',

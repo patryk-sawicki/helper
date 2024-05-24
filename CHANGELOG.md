@@ -1,3 +1,7 @@
+### 0.5.1.5
+
+files – trait – Added slug.
+
 ### 0.5.1.4
 
 BaseFile – img – Fix for sizes.
