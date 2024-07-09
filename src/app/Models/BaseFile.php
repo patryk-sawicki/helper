@@ -3,6 +3,7 @@
 namespace PatrykSawicki\Helper\app\Models;
 
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Casts\AsArrayObject;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -33,11 +34,19 @@ abstract class BaseFile extends Model
         'file',
         'width',
         'height',
+        'additional_properties',
         'protected_type',
         'protected_id',
         'model_type',
         'model_id',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'additional_properties' => AsArrayObject::class,
+        ];
+    }
 
     protected array $protectedRelations = [
         'pageParameterImages',
@@ -134,14 +143,16 @@ abstract class BaseFile extends Model
      * @return string
      */
     public function img(
-        ?int $width = null,
-        ?int $height = null,
+        ?int    $width = null,
+        ?int    $height = null,
         ?string $class = null,
         ?string $alt = null,
         ?string $style = null,
-        string $loading = 'lazy',
-        string $fetchPriority = 'auto'
-    ): string {
+        string  $loading = 'lazy',
+        string  $fetchPriority = 'auto',
+        ?string $title = null
+    ): string
+    {
         if (is_null($width) && is_null($height)) {
             $width = 1920;
         }
@@ -154,8 +165,10 @@ abstract class BaseFile extends Model
 
         $sizes = !is_null($width) ? 'sizes="(max-width: ' . $width . 'px) 100vw, ' . $width . 'px"' : '';
 
-        return '<img src="' . $this->url() . '" srcset="' . $this->srcset(
-            ) . '" ' . $sizes . ' ' . $class . ' alt="' . $alt . '" style="' . $style . '" loading="' . $loading . '" width="' . $thumbnail->width . '" height="' . $thumbnail->height . '" fetchpriority="' . $fetchPriority . '">';
+        $alt ??= $this->additional_properties?->alt;
+        $title ??= $this->additional_properties?->title;
+
+        return '<img src="' . $this->url() . '" srcset="' . $this->srcset() . '" ' . $sizes . ' ' . $class . ' alt="' . $alt . '" title="' . $title . '" style="' . $style . '" loading="' . $loading . '" width="' . $thumbnail->width . '" height="' . $thumbnail->height . '" fetchpriority="' . $fetchPriority . '">';
     }
 
     public function scopeMainFile(Builder $query, $fileClass): Builder

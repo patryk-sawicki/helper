@@ -1,3 +1,7 @@
+### 0.5.2.0
+
+BaseFile – Added additional_properties for eg title and alt.
+
 ### 0.5.1.6
 
 BaseFile – Added function findBySlug.

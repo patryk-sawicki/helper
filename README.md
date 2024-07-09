@@ -4,7 +4,7 @@ A set of helpful tools for PHP.
 
 ## Requirements
 
-* PHP 8.0 or higher with json extensions.
+* PHP 8.2 or higher with json extensions.
 
 ## Installation
 
