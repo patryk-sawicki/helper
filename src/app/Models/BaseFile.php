@@ -134,25 +134,17 @@ abstract class BaseFile extends Model
     /**
      * Return image html code.
      *
-     * @param int|null $width
-     * @param int|null $height
-     * @param string|null $class
-     * @param string|null $alt
-     * @param string|null $style
-     * @param string $loading
-     * @return string
      */
     public function img(
-        ?int    $width = null,
-        ?int    $height = null,
+        ?int $width = null,
+        ?int $height = null,
         ?string $class = null,
         ?string $alt = null,
         ?string $style = null,
-        string  $loading = 'lazy',
-        string  $fetchPriority = 'auto',
+        string $loading = 'lazy',
+        string $fetchPriority = 'auto',
         ?string $title = null
-    ): string
-    {
+    ): string {
         if (is_null($width) && is_null($height)) {
             $width = 1920;
         }
@@ -168,7 +160,25 @@ abstract class BaseFile extends Model
         $alt ??= $this->additional_properties?->alt;
         $title ??= $this->additional_properties?->title;
 
-        return '<img src="' . $this->url() . '" srcset="' . $this->srcset() . '" ' . $sizes . ' ' . $class . ' alt="' . $alt . '" title="' . $title . '" style="' . $style . '" loading="' . $loading . '" width="' . $thumbnail->width . '" height="' . $thumbnail->height . '" fetchpriority="' . $fetchPriority . '">';
+        return '<img src="' . $this->url() . '" srcset="' . $this->srcset(
+            ) . '" ' . $sizes . ' ' . $class . ' alt="' . $alt . '" title="' . $title . '" style="' . $style . '" loading="' . $loading . '" width="' . $thumbnail->width . '" height="' . $thumbnail->height . '" fetchpriority="' . $fetchPriority . '">';
+    }
+
+    /**
+     * Return image preload html code.
+     *
+     */
+    public function imgPreload(
+        ?int $width = null,
+    ): string {
+        if (is_null($width)) {
+            $width = 1920;
+        }
+
+        $sizes = !is_null($width) ? 'imagesizes="(max-width: ' . $width . 'px) 100vw, ' . $width . 'px"' : '';
+
+        return '<link rel="preload" as="image" href="' . $this->url() . '" imagesrcset="' . $this->srcset(
+            ) . '" ' . $sizes . '>';
     }
 
     public function scopeMainFile(Builder $query, $fileClass): Builder

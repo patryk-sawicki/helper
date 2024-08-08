@@ -1,3 +1,7 @@
+### 0.5.2.1
+
+BaseFile – Added imgPreload function.
+
 ### 0.5.2.0
 
 BaseFile – Added additional_properties for eg title and alt.
