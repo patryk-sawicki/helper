@@ -1,3 +1,7 @@
+### 0.5.2.2
+
+BaseFile – Added cache for basic functions.
+
 ### 0.5.2.1
 
 BaseFile – Added imgPreload function.

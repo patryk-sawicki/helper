@@ -25,6 +25,7 @@ abstract class BaseFile extends Model
     use SoftDeletes;
 
     protected $table = 'files';
+    public static string $cacheName = 'files';
 
     protected $fillable = [
         'name',
@@ -122,13 +123,20 @@ abstract class BaseFile extends Model
      */
     public function srcset(): string
     {
-        $srcset = $this->url() . ' ' . $this->width . 'w';
+        return Cache::tags([self::$cacheName])
+            ->remember(
+                self::$cacheName . '_srcset_' . $this->id,
+                config('app.cache_default_ttl', 86400),
+                function () {
+                    $srcset = $this->url() . ' ' . $this->width . 'w';
 
-        foreach ($this->thumbnails as $thumbnail) {
-            $srcset .= ', ' . $thumbnail->url() . ' ' . $thumbnail->width . 'w';
-        }
+                    foreach ($this->thumbnails as $thumbnail) {
+                        $srcset .= ', ' . $thumbnail->url() . ' ' . $thumbnail->width . 'w';
+                    }
 
-        return $srcset;
+                    return $srcset;
+                }
+            );
     }
 
     /**
@@ -145,23 +153,30 @@ abstract class BaseFile extends Model
         string $fetchPriority = 'auto',
         ?string $title = null
     ): string {
-        if (is_null($width) && is_null($height)) {
-            $width = 1920;
-        }
+        return Cache::tags([self::$cacheName])
+            ->remember(
+                self::$cacheName . '_img_' . $this->id . '_' . implode('_', func_get_args()),
+                config('app.cache_default_ttl', 86400),
+                function () use ($width, $height, $class, $alt, $style, $loading, $fetchPriority, $title) {
+                    if (is_null($width) && is_null($height)) {
+                        $width = 1920;
+                    }
 
-        $thumbnail = $this->thumbnail($width, $height);
+                    $thumbnail = $this->thumbnail($width, $height);
 
-        if (!is_null($class)) {
-            $class = 'class="' . $class . '"';
-        }
+                    if (!is_null($class)) {
+                        $class = 'class="' . $class . '"';
+                    }
 
-        $sizes = !is_null($width) ? 'sizes="(max-width: ' . $width . 'px) 100vw, ' . $width . 'px"' : '';
+                    $sizes = !is_null($width) ? 'sizes="(max-width: ' . $width . 'px) 100vw, ' . $width . 'px"' : '';
 
-        $alt ??= $this->additional_properties?->alt;
-        $title ??= $this->additional_properties?->title;
+                    $alt ??= $this->additional_properties?->alt;
+                    $title ??= $this->additional_properties?->title;
 
-        return '<img src="' . $this->url() . '" srcset="' . $this->srcset(
-            ) . '" ' . $sizes . ' ' . $class . ' alt="' . $alt . '" title="' . $title . '" style="' . $style . '" loading="' . $loading . '" width="' . $thumbnail->width . '" height="' . $thumbnail->height . '" fetchpriority="' . $fetchPriority . '">';
+                    return '<img src="' . $this->url() . '" srcset="' . $this->srcset(
+                        ) . '" ' . $sizes . ' ' . $class . ' alt="' . $alt . '" title="' . $title . '" style="' . $style . '" loading="' . $loading . '" width="' . $thumbnail->width . '" height="' . $thumbnail->height . '" fetchpriority="' . $fetchPriority . '">';
+                }
+            );
     }
 
     /**
@@ -188,6 +203,13 @@ abstract class BaseFile extends Model
 
     public static function findBySlug(string $slug): ?self
     {
-        return self::where('slug', '=', $slug)->first();
+        return Cache::tags([self::$cacheName])
+            ->remember(
+                self::$cacheName . '_findBySlug_' . $slug,
+                config('app.cache_default_ttl', 86400),
+                function () use ($slug) {
+                    return self::where('slug', '=', $slug)->with('thumbnails')->first();
+                }
+            );
     }
 }
