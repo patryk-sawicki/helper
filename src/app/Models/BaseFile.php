@@ -212,4 +212,9 @@ abstract class BaseFile extends Model
                 }
             );
     }
+
+    public function fullStoragePatch(): string
+    {
+        return storage_path('app' . $this->file);
+    }
 }

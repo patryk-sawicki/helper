@@ -1,3 +1,7 @@
+### 0.5.2.3
+
+BaseFile – Added fullStoragePatch function.
+
 ### 0.5.2.2
 
 BaseFile – Added cache for basic functions.
