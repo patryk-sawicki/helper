@@ -49,7 +49,7 @@ trait files
 
         $fileName = $file->getClientOriginalName();
         $filePath = '/' . config('filesSettings.main_dir', 'hidden') . '/' . $location . '/' .
-                    date('Y') . '/' . date('m') . '/' . date('d') . '/';
+            date('Y') . '/' . date('m') . '/' . date('d') . '/';
         $extension = explode('.', $fileName);
         $extension = strtolower($extension[count($extension) - 1]);
 
@@ -68,6 +68,7 @@ trait files
             'type' => $extension,
             'mime_type' => $file->getMimeType(),
             'file' => $filePath,
+            'relation_type' => $relationName != 'files' ? $relationName : null,
         ]);
 
         if (!$externalRelation) {

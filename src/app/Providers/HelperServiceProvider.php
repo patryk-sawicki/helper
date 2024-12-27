@@ -18,7 +18,7 @@ class HelperServiceProvider extends ServiceProvider
 
         include $path . '/routes/web.php';
 
-        if(file_exists($this->app->databasePath() . '/config/filesSettings.php') == false){
+        if (file_exists($this->app->databasePath() . '/config/filesSettings.php') == false) {
             $this->publishes([$path . '/config/filesSettings.php' => config_path('filesSettings.php')], 'config');
         }
 
@@ -37,5 +37,8 @@ class HelperServiceProvider extends ServiceProvider
 
         /*Add FilesRebuildCommand*/
         $this->commands(FilesRebuildCommand::class);
+
+        /*Load Migrations*/
+        $this->loadMigrationsFrom($path . '/database/migrations');
     }
 }

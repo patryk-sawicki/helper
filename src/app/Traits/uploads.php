@@ -19,43 +19,75 @@ trait uploads
     /**
      * Add image.
      *
-     * @param UploadedFile $uploadedFile
      * @param string $location e.g. order_files
      * @param string $relationName e.g. files
-     * @param array $categories
      * @param int|null $max_width
      * @param int|null $max_height
-     * @param bool $externalRelation
-     * @param array $options
-     * @return Model
      */
-    public function addUpload(UploadedFile $uploadedFile, string $location='uploads', string $relationName='files',
-        array $categories=[], int $max_width=null, int $max_height=null, bool $externalRelation = true, array $options=[])
-    : Model
-    {
-        if(explode('/', $uploadedFile->getMimeType())[0] != 'image' ||
-           str_contains($uploadedFile->getMimeType(), 'svg'))
-        {
-            $file=$this->addFile(file: $uploadedFile, location: $location, relationName: $relationName,
-                max_width: $max_width, max_height: $max_height, externalRelation: $externalRelation, options: $options);
+    public function addUpload(
+        UploadedFile $uploadedFile,
+        string $location = 'uploads',
+        string $relationName = 'files',
+        array $categories = [],
+        int $max_width = null,
+        int $max_height = null,
+        bool $externalRelation = true,
+        array $options = []
+    ): Model {
+        if (explode('/', $uploadedFile->getMimeType())[0] != 'image' ||
+            str_contains($uploadedFile->getMimeType(), 'svg')) {
+            $file = $this->addFile(
+                file: $uploadedFile,
+                location: $location,
+                relationName: $relationName,
+                max_width: $max_width,
+                max_height: $max_height,
+                externalRelation: $externalRelation,
+                options: $options
+            );
 
-            if(!empty($categories))
+            if (!empty($categories)) {
                 $file->categories()->sync($categories);
+            }
 
             return $file;
         }
 
-        $file=$this->addFile(file: $uploadedFile, location: $location, relationName: $relationName,
-            max_width: $max_width, max_height: $max_height, externalRelation: $externalRelation, options: $options);
+        $file = $this->addFile(
+            file: $uploadedFile,
+            location: $location,
+            relationName: $relationName,
+            max_width: $max_width,
+            max_height: $max_height,
+            externalRelation: $externalRelation,
+            options: $options
+        );
 
-        if(!empty($categories))
+        /*Save original version of image.*/
+        $file->addFile(
+            file: $uploadedFile,
+            location: $location,
+            relationName: 'source',
+            forceWebP: false,
+            preventResizing: true,
+            options: $options
+        );
+
+        if (!empty($categories)) {
             $file->categories()->sync($categories);
+        }
 
-        foreach(config('filesSettings.thumbnailSizes', []) as $thumbnailSize)
-        {
-            if($file->width > $thumbnailSize['width'] && $file->height > $thumbnailSize['height'])
-                $file->addFile(file: $uploadedFile, location: $location, relationName: 'thumbnails',
-                    max_width: $thumbnailSize['width'], max_height: $thumbnailSize['height'], options: $options);
+        foreach (config('filesSettings.thumbnailSizes', []) as $thumbnailSize) {
+            if ($file->width > $thumbnailSize['width'] && $file->height > $thumbnailSize['height']) {
+                $file->addFile(
+                    file: $uploadedFile,
+                    location: $location,
+                    relationName: 'thumbnails',
+                    max_width: $thumbnailSize['width'],
+                    max_height: $thumbnailSize['height'],
+                    options: $options
+                );
+            }
         }
 
         return $file;
@@ -64,47 +96,54 @@ trait uploads
     /**
      * Add uploads.
      *
-     * @param array $files
      * @param string $location e.g. order_files
      * @param string $relationName e.g. files
-     * @param array $categories
      */
-    public function addUploads(array $files, string $location='uploads', string $relationName='files', array $categories=[], array $options=[]): void
-    {
-        foreach($files as $file)
+    public function addUploads(
+        array $files,
+        string $location = 'uploads',
+        string $relationName = 'files',
+        array $categories = [],
+        array $options = []
+    ): void {
+        foreach ($files as $file) {
             $this->addUpload($file, $location, $relationName, $categories, options: $options);
+        }
     }
 
     /**
      * Regenerate thumbnails.
      */
-    public function regenerateThumbnails(string $filesClass, string $location='uploads'): void
+    public function regenerateThumbnails(string $filesClass, string $location = 'uploads'): void
     {
         $thumbnailSizes = config('filesSettings.thumbnailSizes', []);
         $thumbnailSizes = collect($thumbnailSizes);
 
         /*Remove old, not currently needed thumbnails.*/
         $thumbnails = $filesClass::where('model_type', $filesClass)->get();
-        foreach($thumbnails as $thumbnail)
-        {
-            $thumbnailSize = $thumbnailSizes->where('width', $thumbnail->width)->where('height', $thumbnail->height)->first();
+        foreach ($thumbnails as $thumbnail) {
+            $thumbnailSize = $thumbnailSizes->where('width', $thumbnail->width)->where(
+                'height',
+                $thumbnail->height
+            )->first();
             $thumbnailSize ??= $thumbnailSizes->where('width', $thumbnail->width)->first();
             $thumbnailSize ??= $thumbnailSizes->where('height', $thumbnail->height)->first();
 
-            if(!$thumbnailSize)
+            if (!$thumbnailSize) {
                 $thumbnail->delete();
+            }
         }
 
         $files = $filesClass::mainFile(fileClass: $filesClass)
             ->where('mime_type', 'like', '%image%')->where('mime_type', 'not like', '%svg%')->get();
 
-        foreach($files as $file)
-        {
+        foreach ($files as $file) {
             $filePath = storage_path('app' . $file->file);
 
             /*Check if file exist.*/
-            if(!file_exists($filePath))
+            if (!file_exists($filePath)) {
                 continue;
+            }
 
             $uploadedFile = new UploadedFile(
                 $filePath,
@@ -116,42 +155,60 @@ trait uploads
 
             [$fileWidth, $fileHeight] = getimagesize($filePath);
 
-            foreach($thumbnailSizes as $thumbnailSize)
-            {
-                if(($file->thumbnails->count() == 0 || ($file->thumbnails->where('width', $thumbnailSize['width'])->count() == 0 && $file->thumbnails->where('height', $thumbnailSize['height'])->count() == 0)) && ((is_null($thumbnailSize['width']) || $thumbnailSize['width'] < $fileWidth) && (is_null($thumbnailSize['height']) || $thumbnailSize['height'] < $fileHeight)))
-                {
-                    $file->addFile(file: $uploadedFile, location: $location, relationName: 'thumbnails',
-                        max_width: $thumbnailSize['width'], max_height: $thumbnailSize['height']);
+            foreach ($thumbnailSizes as $thumbnailSize) {
+                if (($file->thumbnails->count() == 0 || ($file->thumbnails->where(
+                                'width',
+                                $thumbnailSize['width']
+                            )->count() == 0 && $file->thumbnails->where('height',
+                                $thumbnailSize['height'])->count() == 0)) && ((is_null(
+                                $thumbnailSize['width']
+                            ) || $thumbnailSize['width'] < $fileWidth) && (is_null(
+                                $thumbnailSize['height']
+                            ) || $thumbnailSize['height'] < $fileHeight))) {
+                    $file->addFile(
+                        file: $uploadedFile,
+                        location: $location,
+                        relationName: 'thumbnails',
+                        max_width: $thumbnailSize['width'],
+                        max_height: $thumbnailSize['height']
+                    );
                 }
             }
         }
     }
-    
-    public function rebuildFiles(string $filesClass, bool $forceWebP = true, array $options=[])
+
+    public function rebuildFiles(string $filesClass, bool $forceWebP = true, array $options = []): void
     {
-        if(strtolower(config('filesystems.default')) == 's3')
+        if (strtolower(config('filesystems.default')) == 's3') {
             $options = [];
-        
-        if($forceWebP && config('filesSettings.block_webp_conversion'))
+        }
+
+        if ($forceWebP && config('filesSettings.block_webp_conversion')) {
             $forceWebP = false;
-        
-        $files = $filesClass::mainFile(fileClass: $filesClass)->whereNull('mime_type')->orWhere('mime_type', '!=', 'image/webp')->get();
-        
-        foreach($files as $file)
-        {
+        }
+
+        $files = $filesClass::mainFile(fileClass: $filesClass)->whereNull('mime_type')->orWhere(
+            'mime_type',
+            '!=',
+            'image/webp'
+        )->get();
+
+        foreach ($files as $file) {
             $filePath = storage_path('app' . $file->file);
-            
+
             /*Check if file exist.*/
-            if(!file_exists($filePath))
+            if (!file_exists($filePath)) {
                 continue;
+            }
 
             DB::beginTransaction();
 
             $extension = $file->type;
-            
-            if($forceWebP && in_array($extension, config('filesSettings.forbidden_webp_extensions')))
+
+            if ($forceWebP && in_array($extension, config('filesSettings.forbidden_webp_extensions'))) {
                 $forceWebP = false;
-            
+            }
+
             $uploadedFile = new UploadedFile(
                 $filePath,
                 $file->name,
@@ -159,13 +216,15 @@ trait uploads
                 0,
                 true
             );
-            
-            if($forceWebP && $extension != 'webp' &&
-               (explode('/', $uploadedFile->getMimeType())[0]=='image' && !str_contains($uploadedFile->getMimeType(), 'svg')))
-            {
+
+            if ($forceWebP && $extension != 'webp' &&
+                (explode('/', $uploadedFile->getMimeType())[0] == 'image' && !str_contains(
+                        $uploadedFile->getMimeType(),
+                        'svg'
+                    ))) {
                 $format = new WebpEncoder();
                 $file->update([
-                    'name' => str_replace('.'.$extension, '.webp', $file->name),
+                    'name' => str_replace('.' . $extension, '.webp', $file->name),
                     'type' => 'webp',
                     'mime_type' => 'image/webp',
                 ]);
@@ -178,12 +237,10 @@ trait uploads
 
                 Storage::put(
                     $file->file,
-                    (string) $image->encode($format),
+                    (string)$image->encode($format),
                     $options
                 );
-            }
-            elseif (empty($file->mime_type))
-            {
+            } elseif (empty($file->mime_type)) {
                 $file->update([
                     'mime_type' => $uploadedFile->getMimeType(),
                 ]);

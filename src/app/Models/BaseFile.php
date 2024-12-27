@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\Relations\MorphToMany;
+use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Cache;
 use PatrykSawicki\Helper\app\Traits\files;
@@ -40,6 +41,7 @@ abstract class BaseFile extends Model
         'protected_id',
         'model_type',
         'model_id',
+        'relation_type',
     ];
 
     protected function casts(): array
@@ -80,7 +82,12 @@ abstract class BaseFile extends Model
 
     public function thumbnails(): MorphMany
     {
-        return $this->morphMany($this::class, 'model');
+        return $this->morphMany($this::class, 'model')->where('relation_type', '=', 'thumbnails');
+    }
+
+    public function source(): MorphOne
+    {
+        return $this->morphOne($this::class, 'model')->where('relation_type', '=', 'source');
     }
 
     public function canBeDeleted(): bool
@@ -151,13 +158,26 @@ abstract class BaseFile extends Model
         ?string $style = null,
         string $loading = 'lazy',
         string $fetchPriority = 'auto',
-        ?string $title = null
-    ): string {
+        ?string $title = null,
+        bool $source = false // If true, use source file instead of this file
+    ): string
+    {
         return Cache::tags([self::$cacheName])
             ->remember(
                 self::$cacheName . '_img_' . $this->id . '_' . implode('_', func_get_args()),
                 config('app.cache_default_ttl', 86400),
-                function () use ($width, $height, $class, $alt, $style, $loading, $fetchPriority, $title) {
+                function () use ($width, $height, $class, $alt, $style, $loading, $fetchPriority, $title, $source) {
+                    $srcset = '';
+                    if ($source && $this->source) {
+                        $url = $this->source->url();
+                        $width = $this->source->width;
+                        $height = $this->source->height;
+                    } else {
+                        $source = false;
+                        $url = $this->url();
+                        $srcset = ' srcset="' . $this->srcset() . '"';
+                    }
+
                     if (is_null($width) && is_null($height)) {
                         $width = 1920;
                     }
@@ -173,8 +193,7 @@ abstract class BaseFile extends Model
                     $alt ??= $this->additional_properties?->alt;
                     $title ??= $this->additional_properties?->title;
 
-                    return '<img src="' . $this->url() . '" srcset="' . $this->srcset(
-                        ) . '" ' . $sizes . ' ' . $class . ' alt="' . $alt . '" title="' . $title . '" style="' . $style . '" loading="' . $loading . '" width="' . $thumbnail->width . '" height="' . $thumbnail->height . '" fetchpriority="' . $fetchPriority . '">';
+                    return '<img src="' . $url . '" ' . $srcset . ' ' . $sizes . ' ' . $class . ' alt="' . $alt . '" title="' . $title . '" style="' . $style . '" loading="' . $loading . '" width="' . $thumbnail->width . '" height="' . $thumbnail->height . '" fetchpriority="' . $fetchPriority . '">';
                 }
             );
     }
@@ -192,8 +211,7 @@ abstract class BaseFile extends Model
 
         $sizes = !is_null($width) ? 'imagesizes="(max-width: ' . $width . 'px) 100vw, ' . $width . 'px"' : '';
 
-        return '<link rel="preload" as="image" href="' . $this->url() . '" imagesrcset="' . $this->srcset(
-            ) . '" ' . $sizes . '>';
+        return '<link rel="preload" as="image" href="' . $this->url() . '" imagesrcset="' . $this->srcset() . '" ' . $sizes . '>';
     }
 
     public function scopeMainFile(Builder $query, $fileClass): Builder

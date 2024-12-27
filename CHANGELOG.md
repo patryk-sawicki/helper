@@ -1,3 +1,12 @@
+### 0.5.3.0
+
+Add relation_type to files and improve file handling logic
+
+Introduced the `relation_type` field in files table to better categorize file associations such as 'thumbnails' and '
+source'. Enhanced file handling by restructuring methods for clarity, adding support for source files, refining
+thumbnail regeneration, and improving WebP conversion logic. Loaded migrations in HelperServiceProvider and updated
+related configurations.
+
 ### 0.5.2.3
 
 BaseFile – Added fullStoragePatch function.

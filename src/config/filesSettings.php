@@ -1,4 +1,5 @@
 <?php
+
 return [
     'images' => [
         'max_width' => 1280,
@@ -32,4 +33,6 @@ return [
     'forbidden_webp_extensions' => [
         'gif',
     ],
+
+    'fileClass' => null, //Set the class of the file model.
 ];
