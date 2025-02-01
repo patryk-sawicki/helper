@@ -1,3 +1,7 @@
+### 0.5.3.1
+
+tableData – Option to add parameter to scopes.
+
 ### 0.5.3.0
 
 Add relation_type to files and improve file handling logic
