@@ -1,3 +1,7 @@
+### 0.5.4
+
+BaseFile – Added support for full URLs in srcset and imgPreload methods.
+
 ### 0.5.3.1
 
 tableData – Option to add parameter to scopes.

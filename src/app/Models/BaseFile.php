@@ -6,10 +6,8 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\AsArrayObject;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
-use Illuminate\Database\Eloquent\Relations\MorphToMany;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Cache;
@@ -127,18 +125,23 @@ abstract class BaseFile extends Model
 
     /**
      * Return html code for image with srcset.
+     *
+     * @param bool $fullUrl If true, use full URLs instead of relative paths
      */
-    public function srcset(): string
+    public function srcset(bool $fullUrl = false): string
     {
         return Cache::tags([self::$cacheName])
             ->remember(
-                self::$cacheName . '_srcset_' . $this->id,
+                self::$cacheName . '_srcset_' . $this->id . ($fullUrl ? '_full_url' : ''),
                 config('app.cache_default_ttl', 86400),
-                function () {
-                    $srcset = $this->url() . ' ' . $this->width . 'w';
+                function () use ($fullUrl) {
+                    $srcset = $fullUrl ? $this->fullUrl() : $this->url();
+                    $srcset .= ' ' . $this->width . 'w';
 
                     foreach ($this->thumbnails as $thumbnail) {
-                        $srcset .= ', ' . $thumbnail->url() . ' ' . $thumbnail->width . 'w';
+                        $srcset .= ', ';
+                        $srcset .= $fullUrl ? $thumbnail->fullUrl() : $thumbnail->url();
+                        $srcset .= ' ' . $thumbnail->width . 'w';
                     }
 
                     return $srcset;
@@ -159,23 +162,34 @@ abstract class BaseFile extends Model
         string $loading = 'lazy',
         string $fetchPriority = 'auto',
         ?string $title = null,
-        bool $source = false // If true, use source file instead of this file
+        bool $source = false, // If true, use source file instead of this file
+        bool $fullUrl = false // If true, use full URL instead of relative path
     ): string
     {
         return Cache::tags([self::$cacheName])
             ->remember(
                 self::$cacheName . '_img_' . $this->id . '_' . implode('_', func_get_args()),
                 config('app.cache_default_ttl', 86400),
-                function () use ($width, $height, $class, $alt, $style, $loading, $fetchPriority, $title, $source) {
+                function () use (
+                    $width,
+                    $height,
+                    $class,
+                    $alt,
+                    $style,
+                    $loading,
+                    $fetchPriority,
+                    $title,
+                    $source,
+                    $fullUrl
+                ) {
                     $srcset = '';
                     if ($source && $this->source) {
-                        $url = $this->source->url();
+                        $url = $fullUrl ? $this->source->fullUrl() : $this->source->url();
                         $width = $this->source->width;
                         $height = $this->source->height;
                     } else {
-                        $source = false;
-                        $url = $this->url();
-                        $srcset = ' srcset="' . $this->srcset() . '"';
+                        $url = $fullUrl ? $this->fullUrl() : $this->url();
+                        $srcset = ' srcset="' . $this->srcset($fullUrl) . '"';
                     }
 
                     if (is_null($width) && is_null($height)) {
@@ -204,14 +218,18 @@ abstract class BaseFile extends Model
      */
     public function imgPreload(
         ?int $width = null,
+        bool $fullUrl = false
     ): string {
         if (is_null($width)) {
             $width = 1920;
         }
 
         $sizes = !is_null($width) ? 'imagesizes="(max-width: ' . $width . 'px) 100vw, ' . $width . 'px"' : '';
+        $url = $fullUrl ? $this->fullUrl() : $this->url();
 
-        return '<link rel="preload" as="image" href="' . $this->url() . '" imagesrcset="' . $this->srcset() . '" ' . $sizes . '>';
+        return '<link rel="preload" as="image" href="' . $url . '" imagesrcset="' . $this->srcset(
+                $fullUrl
+            ) . '" ' . $sizes . '>';
     }
 
     public function scopeMainFile(Builder $query, $fileClass): Builder
