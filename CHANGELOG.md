@@ -1,3 +1,7 @@
+### 0.6.0
+
+BaseFile – Add position column to fileables table for improved ordering.
+
 ### 0.5.4
 
 BaseFile – Added support for full URLs in srcset and imgPreload methods.
