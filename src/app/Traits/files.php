@@ -42,7 +42,8 @@ trait files
         bool $preventResizing = false,
         array $options = [],
         ?UploadedFile $watermark = null,
-        int $watermarkOpacity = 70
+        int $watermarkOpacity = 70,
+        Model $fileModel = null
     ): Model {
         if (strtolower(config('filesystems.default')) == 's3') {
             $options = [];
@@ -61,16 +62,23 @@ trait files
             $forceWebP = false;
         }
 
-        $slug = $this->createSlug(name: $fileName);
-
-        $fileModel = $this->{$relationName}()->create([
+        $input = [
             'name' => $fileName,
-            'slug' => $slug,
             'type' => $extension,
             'mime_type' => $file->getMimeType(),
             'file' => $filePath,
             'relation_type' => $relationName != 'files' ? $relationName : null,
-        ]);
+        ];
+
+        if (is_null($fileModel)) {
+            $input['slug'] = $this->createSlug(name: $fileName);
+        }
+
+        if (is_null($fileModel)) {
+            $fileModel = $this->{$relationName}()->create($input);
+        } else {
+            $fileModel->update($input);
+        }
 
         if (!$externalRelation) {
             $this->update([

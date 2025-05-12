@@ -1,3 +1,11 @@
+### 0.7.3
+
+BaseFile - Refactored rebuildFromSource method to use functions from the files trait
+
+### 0.7.2
+
+BaseFile - Add rebuildFromSource method to rebuild a file and its thumbnails from source file
+
 ### 0.7.1
 
 Add ability to customize watermark opacity (default: 70)

@@ -2,6 +2,7 @@
 
 namespace PatrykSawicki\Helper\app\Models;
 
+use Exception;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\AsArrayObject;
 use Illuminate\Database\Eloquent\Collection;
@@ -10,7 +11,11 @@ use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use PatrykSawicki\Helper\app\Traits\files;
 
 /**
@@ -252,5 +257,114 @@ abstract class BaseFile extends Model
     public function fullStoragePatch(): string
     {
         return storage_path('app' . $this->file);
+    }
+
+    /**
+     * Rebuild file and its thumbnails from source file.
+     *
+     * @param bool $forceWebP Convert to WebP if possible
+     * @param array $options Storage options
+     * @param UploadedFile|null $watermark Watermark file
+     * @param int $watermarkOpacity Watermark opacity (0-100)
+     * @return bool Success status
+     */
+    public function rebuildFromSource(
+        string $location = 'uploads',
+        string $relationName = 'files',
+        bool $forceWebP = true,
+        array $options = [],
+        ?UploadedFile $watermark = null,
+        int $watermarkOpacity = 70
+    ): bool {
+        // Check if source file exists
+        $sourceFile = $this->source()->first();
+        if (!$sourceFile) {
+            Log::info('Source file not found for file ID: ' . $this->id);
+            return false;
+        }
+
+        $sourceFilePath = $sourceFile->fullStoragePatch();
+        if (!file_exists($sourceFilePath)) {
+            Log::info('Source file does not exist: ' . $sourceFilePath);
+            return false;
+        }
+
+        // Begin transaction to ensure data consistency
+        DB::beginTransaction();
+
+        try {
+            // Create UploadedFile instance from source file
+            $uploadedFile = new UploadedFile(
+                $sourceFilePath,
+                $sourceFile->name,
+                $sourceFile->mime_type,
+                0,
+                true
+            );
+
+            // Delete all thumbnails
+            foreach ($this->thumbnails as $thumbnail) {
+                // Delete file from storage
+                Storage::delete($thumbnail->file);
+                // Delete record
+                $thumbnail->delete();
+            }
+
+            // Remove old file
+            Storage::delete($this->file);
+
+            // Process main file using the addFile method from files trait
+            $this->model->addFile(
+                file: $uploadedFile,
+                location: $location,
+                relationName: $relationName, // Using 'files' as we're updating the main file
+                max_width: null, // No resizing for main file
+                max_height: null,
+                externalRelation: false, // We want to update this model
+                forceWebP: $forceWebP,
+                preventResizing: true, // Don't resize the main file
+                options: $options,
+                watermark: $watermark,
+                watermarkOpacity: $watermarkOpacity,
+                fileModel: $this
+            );
+
+            // Generate thumbnails if this is an image
+            if (explode('/', $this->mime_type)[0] == 'image' && !str_contains($this->mime_type, 'svg')) {
+                $thumbnailSizes = config('filesSettings.thumbnailSizes', []);
+                $thumbnailFiles = [];
+                [$fileWidth, $fileHeight] = getimagesize($this->fullStoragePatch());
+
+                // Prepare array of files for thumbnail generation
+                foreach ($thumbnailSizes as $thumbnailSize) {
+                    if ((is_null($thumbnailSize['width']) || $thumbnailSize['width'] < $fileWidth) &&
+                        (is_null($thumbnailSize['height']) || $thumbnailSize['height'] < $fileHeight)) {
+                        // Add the file to the array for each valid thumbnail size
+                        $thumbnailFiles[] = $uploadedFile;
+                    }
+                }
+
+                // Use addFiles method from files trait to generate all thumbnails at once
+                if (!empty($thumbnailFiles)) {
+                    $this->addFiles(
+                        files: $thumbnailFiles,
+                        location: $location,
+                        relationName: 'thumbnails',
+                        watermark: $watermark,
+                        watermarkOpacity: $watermarkOpacity
+                    );
+                }
+            }
+
+            // Clear cache for this file
+            Cache::tags([self::$cacheName])->flush();
+
+            DB::commit();
+            return true;
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Error rebuilding file from source: ' . $e->getMessage());
+            return false;
+        }
     }
 }
