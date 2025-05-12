@@ -33,7 +33,8 @@ trait uploads
         int $max_height = null,
         bool $externalRelation = true,
         array $options = [],
-        ?UploadedFile $watermark = null
+        ?UploadedFile $watermark = null,
+        int $watermarkOpacity = 70
     ): Model {
         if (explode('/', $uploadedFile->getMimeType())[0] != 'image' ||
             str_contains($uploadedFile->getMimeType(), 'svg')) {
@@ -45,7 +46,8 @@ trait uploads
                 max_height: $max_height,
                 externalRelation: $externalRelation,
                 options: $options,
-                watermark: $watermark
+                watermark: $watermark,
+                watermarkOpacity: $watermarkOpacity
             );
 
             if (!empty($categories)) {
@@ -63,7 +65,8 @@ trait uploads
             max_height: $max_height,
             externalRelation: $externalRelation,
             options: $options,
-            watermark: $watermark
+            watermark: $watermark,
+            watermarkOpacity: $watermarkOpacity
         );
 
         /*Save original version of image.*/
@@ -73,8 +76,7 @@ trait uploads
             relationName: 'source',
             forceWebP: false,
             preventResizing: true,
-            options: $options,
-            watermark: $watermark
+            options: $options
         );
 
         if (!empty($categories)) {
@@ -90,7 +92,8 @@ trait uploads
                     max_width: $thumbnailSize['width'],
                     max_height: $thumbnailSize['height'],
                     options: $options,
-                    watermark: $watermark
+                    watermark: $watermark,
+                    watermarkOpacity: $watermarkOpacity
                 );
             }
         }
@@ -110,18 +113,31 @@ trait uploads
         string $relationName = 'files',
         array $categories = [],
         array $options = [],
-        ?UploadedFile $watermark = null
+        ?UploadedFile $watermark = null,
+        int $watermarkOpacity = 70
     ): void {
         foreach ($files as $file) {
-            $this->addUpload($file, $location, $relationName, $categories, options: $options, watermark: $watermark);
+            $this->addUpload(
+                $file,
+                $location,
+                $relationName,
+                $categories,
+                options: $options,
+                watermark: $watermark,
+                watermarkOpacity: $watermarkOpacity
+            );
         }
     }
 
     /**
      * Regenerate thumbnails.
      */
-    public function regenerateThumbnails(string $filesClass, string $location = 'uploads', ?UploadedFile $watermark = null): void
-    {
+    public function regenerateThumbnails(
+        string $filesClass,
+        string $location = 'uploads',
+        ?UploadedFile $watermark = null,
+        int $watermarkOpacity = 70
+    ): void {
         $thumbnailSizes = config('filesSettings.thumbnailSizes', []);
         $thumbnailSizes = collect($thumbnailSizes);
 
@@ -165,27 +181,35 @@ trait uploads
                 if (($file->thumbnails->count() == 0 || ($file->thumbnails->where(
                                 'width',
                                 $thumbnailSize['width']
-                            )->count() == 0 && $file->thumbnails->where('height',
-                                $thumbnailSize['height'])->count() == 0)) && ((is_null(
-                                $thumbnailSize['width']
-                            ) || $thumbnailSize['width'] < $fileWidth) && (is_null(
+                            )->count() == 0 && $file->thumbnails->where(
+                                'height',
                                 $thumbnailSize['height']
-                            ) || $thumbnailSize['height'] < $fileHeight))) {
+                            )->count() == 0)) && ((is_null(
+                                                       $thumbnailSize['width']
+                                                   ) || $thumbnailSize['width'] < $fileWidth) && (is_null(
+                                                                                                      $thumbnailSize['height']
+                                                                                                  ) || $thumbnailSize['height'] < $fileHeight))) {
                     $file->addFile(
                         file: $uploadedFile,
                         location: $location,
                         relationName: 'thumbnails',
                         max_width: $thumbnailSize['width'],
                         max_height: $thumbnailSize['height'],
-                        watermark: $watermark
+                        watermark: $watermark,
+                        watermarkOpacity: $watermarkOpacity
                     );
                 }
             }
         }
     }
 
-    public function rebuildFiles(string $filesClass, bool $forceWebP = true, array $options = [], ?UploadedFile $watermark = null): void
-    {
+    public function rebuildFiles(
+        string $filesClass,
+        bool $forceWebP = true,
+        array $options = [],
+        ?UploadedFile $watermark = null,
+        int $watermarkOpacity = 70
+    ): void {
         if (strtolower(config('filesystems.default')) == 's3') {
             $options = [];
         }
@@ -256,6 +280,10 @@ trait uploads
             DB::commit();
         }
 
-        $this->regenerateThumbnails(filesClass: $filesClass, watermark: $watermark);
+        $this->regenerateThumbnails(
+            filesClass: $filesClass,
+            watermark: $watermark,
+            watermarkOpacity: $watermarkOpacity
+        );
     }
 }

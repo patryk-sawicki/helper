@@ -24,6 +24,12 @@ trait files
      * @param string $relationName e.g. files
      * @param int|null $max_width
      * @param int|null $max_height
+     * @param bool $externalRelation
+     * @param bool $forceWebP
+     * @param bool $preventResizing
+     * @param array $options
+     * @param UploadedFile|null $watermark
+     * @param int $watermarkOpacity Watermark opacity (0-100)
      */
     public function addFile(
         UploadedFile $file,
@@ -35,7 +41,8 @@ trait files
         bool $forceWebP = true,
         bool $preventResizing = false,
         array $options = [],
-        ?UploadedFile $watermark = null
+        ?UploadedFile $watermark = null,
+        int $watermarkOpacity = 70
     ): Model {
         if (strtolower(config('filesystems.default')) == 's3') {
             $options = [];
@@ -96,10 +103,9 @@ trait files
 
                     $positionX = 0;
                     $positionY = 0;
-                    $opacity = 70;
 
                     // Apply watermark
-                    $image->place($watermarkImage, 'top-left', $positionX, $positionY, $opacity);
+                    $image->place($watermarkImage, 'top-left', $positionX, $positionY, $watermarkOpacity);
                 }
 
                 $format = null;
@@ -147,11 +153,30 @@ trait files
      * @param array $files
      * @param string $location e.g. order_files
      * @param string $relationName e.g. files
+     * @param UploadedFile|null $watermark
+     * @param int $watermarkOpacity Watermark opacity (0-100)
      */
-    public function addFiles(array $files, string $location = 'files', string $relationName = 'files')
-    {
+    public function addFiles(
+        array $files,
+        string $location = 'files',
+        string $relationName = 'files',
+        ?UploadedFile $watermark = null,
+        int $watermarkOpacity = 70
+    ) {
         foreach ($files as $file) {
-            $this->addFile($file, $location, $relationName);
+            $this->addFile(
+                $file,
+                $location,
+                $relationName,
+                null,
+                null,
+                true,
+                true,
+                false,
+                [],
+                $watermark,
+                $watermarkOpacity
+            );
         }
     }
 

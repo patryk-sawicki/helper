@@ -1,3 +1,7 @@
+### 0.7.1
+
+Add ability to customize watermark opacity (default: 70)
+
 ### 0.7.0
 
 Add watermark support to file upload and regeneration methods
