@@ -1,3 +1,7 @@
+### 0.7.0
+
+Add watermark support to file upload and regeneration methods
+
 ### 0.6.0
 
 BaseFile – Add position column to fileables table for improved ordering.

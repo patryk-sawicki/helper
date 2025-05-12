@@ -10,7 +10,6 @@ use Illuminate\Support\Str;
 use Intervention\Image\Drivers\Gd\Driver;
 use Intervention\Image\Encoders\WebpEncoder;
 use Intervention\Image\ImageManager;
-use PatrykSawicki\Helper\app\Models\BaseFile;
 
 /*
  * Trait for saving files.
@@ -21,16 +20,10 @@ trait files
     /**
      * Add file.
      *
-     * @param UploadedFile $file
      * @param string $location e.g. order_files
      * @param string $relationName e.g. files
      * @param int|null $max_width
      * @param int|null $max_height
-     * @param bool $externalRelation
-     * @param bool $forceWebP
-     * @param bool $preventResizing
-     * @param array $options
-     * @return Model
      */
     public function addFile(
         UploadedFile $file,
@@ -41,7 +34,8 @@ trait files
         bool $externalRelation = true,
         bool $forceWebP = true,
         bool $preventResizing = false,
-        array $options = []
+        array $options = [],
+        ?UploadedFile $watermark = null
     ): Model {
         if (strtolower(config('filesystems.default')) == 's3') {
             $options = [];
@@ -49,7 +43,7 @@ trait files
 
         $fileName = $file->getClientOriginalName();
         $filePath = '/' . config('filesSettings.main_dir', 'hidden') . '/' . $location . '/' .
-            date('Y') . '/' . date('m') . '/' . date('d') . '/';
+                    date('Y') . '/' . date('m') . '/' . date('d') . '/';
         $extension = explode('.', $fileName);
         $extension = strtolower($extension[count($extension) - 1]);
 
@@ -90,6 +84,22 @@ trait files
 
                 if (!$preventResizing) {
                     $image->scale(width: $max_width, height: $max_height);
+                }
+
+                // Apply watermark if provided and not in 'source' relation
+                if ($watermark !== null && $relationName !== 'source') {
+                    $watermarkImage = $manager->read($watermark);
+                    // Scale watermark to be proportional to the image
+                    $watermarkWidth = $image->width();
+                    $watermarkHeight = ($watermarkWidth / $watermarkImage->width()) * $watermarkImage->height();
+                    $watermarkImage->scale(width: $watermarkWidth, height: $watermarkHeight);
+
+                    $positionX = 0;
+                    $positionY = 0;
+                    $opacity = 70;
+
+                    // Apply watermark
+                    $image->place($watermarkImage, 'top-left', $positionX, $positionY, $opacity);
                 }
 
                 $format = null;

@@ -32,7 +32,8 @@ trait uploads
         int $max_width = null,
         int $max_height = null,
         bool $externalRelation = true,
-        array $options = []
+        array $options = [],
+        ?UploadedFile $watermark = null
     ): Model {
         if (explode('/', $uploadedFile->getMimeType())[0] != 'image' ||
             str_contains($uploadedFile->getMimeType(), 'svg')) {
@@ -43,7 +44,8 @@ trait uploads
                 max_width: $max_width,
                 max_height: $max_height,
                 externalRelation: $externalRelation,
-                options: $options
+                options: $options,
+                watermark: $watermark
             );
 
             if (!empty($categories)) {
@@ -60,7 +62,8 @@ trait uploads
             max_width: $max_width,
             max_height: $max_height,
             externalRelation: $externalRelation,
-            options: $options
+            options: $options,
+            watermark: $watermark
         );
 
         /*Save original version of image.*/
@@ -70,7 +73,8 @@ trait uploads
             relationName: 'source',
             forceWebP: false,
             preventResizing: true,
-            options: $options
+            options: $options,
+            watermark: $watermark
         );
 
         if (!empty($categories)) {
@@ -85,7 +89,8 @@ trait uploads
                     relationName: 'thumbnails',
                     max_width: $thumbnailSize['width'],
                     max_height: $thumbnailSize['height'],
-                    options: $options
+                    options: $options,
+                    watermark: $watermark
                 );
             }
         }
@@ -104,17 +109,18 @@ trait uploads
         string $location = 'uploads',
         string $relationName = 'files',
         array $categories = [],
-        array $options = []
+        array $options = [],
+        ?UploadedFile $watermark = null
     ): void {
         foreach ($files as $file) {
-            $this->addUpload($file, $location, $relationName, $categories, options: $options);
+            $this->addUpload($file, $location, $relationName, $categories, options: $options, watermark: $watermark);
         }
     }
 
     /**
      * Regenerate thumbnails.
      */
-    public function regenerateThumbnails(string $filesClass, string $location = 'uploads'): void
+    public function regenerateThumbnails(string $filesClass, string $location = 'uploads', ?UploadedFile $watermark = null): void
     {
         $thumbnailSizes = config('filesSettings.thumbnailSizes', []);
         $thumbnailSizes = collect($thumbnailSizes);
@@ -170,14 +176,15 @@ trait uploads
                         location: $location,
                         relationName: 'thumbnails',
                         max_width: $thumbnailSize['width'],
-                        max_height: $thumbnailSize['height']
+                        max_height: $thumbnailSize['height'],
+                        watermark: $watermark
                     );
                 }
             }
         }
     }
 
-    public function rebuildFiles(string $filesClass, bool $forceWebP = true, array $options = []): void
+    public function rebuildFiles(string $filesClass, bool $forceWebP = true, array $options = [], ?UploadedFile $watermark = null): void
     {
         if (strtolower(config('filesystems.default')) == 's3') {
             $options = [];
@@ -249,6 +256,6 @@ trait uploads
             DB::commit();
         }
 
-        $this->regenerateThumbnails(filesClass: $filesClass);
+        $this->regenerateThumbnails(filesClass: $filesClass, watermark: $watermark);
     }
 }
