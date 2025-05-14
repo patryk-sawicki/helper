@@ -1,3 +1,7 @@
+### 0.7.5
+
+Fixed file parameter update when converting images to WebP format. The file parameter now correctly includes the WebP extension when store_with_extension is enabled.
+
 ### 0.7.4
 
 Added option to store files with their extensions. This can be enabled by setting the `store_with_extension` option to `true` in the filesSettings config or by setting the `FILES_SETTINGS_STORE_WITH_EXTENSION` environment variable to `true`. The option is disabled by default.

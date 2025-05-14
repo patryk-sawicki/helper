@@ -123,6 +123,7 @@ trait files
                         'name' => str_replace('.' . $extension, '.webp', $fileName),
                         'type' => 'webp',
                         'mime_type' => 'image/webp',
+                        'file' => $filePath . $fileModel->id . (config('filesSettings.store_with_extension', false) ? '.webp' : ''),
                     ]);
                 }
 
