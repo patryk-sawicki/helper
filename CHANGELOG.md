@@ -1,3 +1,7 @@
+### 0.7.6
+
+Optimized configuration checking in the files trait. The `store_with_extension` configuration is now checked once and stored in a variable for reuse, improving performance by avoiding repeated configuration lookups.
+
 ### 0.7.5
 
 Fixed file parameter update when converting images to WebP format. The file parameter now correctly includes the WebP extension when store_with_extension is enabled.

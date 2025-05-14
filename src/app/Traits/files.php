@@ -45,6 +45,8 @@ trait files
         int $watermarkOpacity = 70,
         Model $fileModel = null
     ): Model {
+        $storeWithExtension = config('filesSettings.store_with_extension', false);
+
         if (strtolower(config('filesystems.default')) == 's3') {
             $options = [];
         }
@@ -86,7 +88,7 @@ trait files
             ]);
         }
 
-        $fileModel->update(['file' => $filePath . $fileModel->id . (config('filesSettings.store_with_extension', false) ? '.' . $extension : ''),]);
+        $fileModel->update(['file' => $filePath . $fileModel->id . ($storeWithExtension ? '.' . $extension : ''),]);
 
         if (explode('/', $file->getMimeType())[0] == 'image' && !str_contains($file->getMimeType(), 'svg')) {
             $max_width ??= config('filesSettings.images.max_width', 1280);
@@ -123,13 +125,13 @@ trait files
                         'name' => str_replace('.' . $extension, '.webp', $fileName),
                         'type' => 'webp',
                         'mime_type' => 'image/webp',
-                        'file' => $filePath . $fileModel->id . (config('filesSettings.store_with_extension', false) ? '.webp' : ''),
+                        'file' => $filePath . $fileModel->id . ($storeWithExtension ? '.webp' : ''),
                     ]);
                 }
 
                 $fileExtension = $forceWebP ? 'webp' : $extension;
                 Storage::put(
-                    $filePath . $fileModel->id . (config('filesSettings.store_with_extension', false) ? '.' . $fileExtension : ''),
+                    $filePath . $fileModel->id . ($storeWithExtension ? '.' . $fileExtension : ''),
                     (string)$image->encode($format),
                     $options
                 );
@@ -151,7 +153,7 @@ trait files
         Storage::putFileAs(
             $filePath,
             $file,
-            $fileModel->id . (config('filesSettings.store_with_extension', false) ? '.' . $extension : ''),
+            $fileModel->id . ($storeWithExtension ? '.' . $extension : ''),
             $options
         );
         return $fileModel;
