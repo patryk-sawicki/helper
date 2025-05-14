@@ -86,7 +86,7 @@ trait files
             ]);
         }
 
-        $fileModel->update(['file' => $filePath . $fileModel->id,]);
+        $fileModel->update(['file' => $filePath . $fileModel->id . (config('filesSettings.store_with_extension', false) ? '.' . $extension : ''),]);
 
         if (explode('/', $file->getMimeType())[0] == 'image' && !str_contains($file->getMimeType(), 'svg')) {
             $max_width ??= config('filesSettings.images.max_width', 1280);
@@ -126,8 +126,9 @@ trait files
                     ]);
                 }
 
+                $fileExtension = $forceWebP ? 'webp' : $extension;
                 Storage::put(
-                    $filePath . $fileModel->id,
+                    $filePath . $fileModel->id . (config('filesSettings.store_with_extension', false) ? '.' . $fileExtension : ''),
                     (string)$image->encode($format),
                     $options
                 );
@@ -149,7 +150,7 @@ trait files
         Storage::putFileAs(
             $filePath,
             $file,
-            $fileModel->id,
+            $fileModel->id . (config('filesSettings.store_with_extension', false) ? '.' . $extension : ''),
             $options
         );
         return $fileModel;

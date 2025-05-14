@@ -1,3 +1,7 @@
+### 0.7.4
+
+Added option to store files with their extensions. This can be enabled by setting the `store_with_extension` option to `true` in the filesSettings config or by setting the `FILES_SETTINGS_STORE_WITH_EXTENSION` environment variable to `true`. The option is disabled by default.
+
 ### 0.7.3
 
 BaseFile - Refactored rebuildFromSource method to use functions from the files trait

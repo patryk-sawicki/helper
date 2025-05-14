@@ -35,4 +35,6 @@ return [
     ],
 
     'fileClass' => null, //Set the class of the file model.
+
+    'store_with_extension' => env('FILES_SETTINGS_STORE_WITH_EXTENSION', false), // Whether to store files with their extensions
 ];
