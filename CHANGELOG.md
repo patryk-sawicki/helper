@@ -1,3 +1,7 @@
+### 0.7.7
+
+Modify Laravel framework requirement in composer.json to support version 12.00
+
 ### 0.7.6
 
 Optimized configuration checking in the files trait. The `store_with_extension` configuration is now checked once and stored in a variable for reuse, improving performance by avoiding repeated configuration lookups.
