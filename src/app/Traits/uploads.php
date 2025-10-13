@@ -210,8 +210,12 @@ trait uploads
         ?UploadedFile $watermark = null,
         int $watermarkOpacity = 70
     ): void {
+        // For S3/B2: Handle visibility parameter for Storage::put() compatibility
         if (strtolower(config('filesystems.default')) == 's3') {
-            $options = [];
+            if (empty($options)) {
+                // Use visibility from disk config, or default to 'public' for backward compatibility
+                $options = config('filesystems.disks.s3.visibility', 'public');
+            }
         }
 
         if ($forceWebP && config('filesSettings.block_webp_conversion')) {

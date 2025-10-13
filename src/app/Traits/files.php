@@ -47,8 +47,13 @@ trait files
     ): Model {
         $storeWithExtension = config('filesSettings.store_with_extension', false);
 
+        // For S3/B2: Handle visibility parameter for putFileAs() compatibility
+        // putFileAs() requires visibility as string, not empty array
         if (strtolower(config('filesystems.default')) == 's3') {
-            $options = [];
+            if (empty($options)) {
+                // Use visibility from disk config, or default to 'public' for backward compatibility
+                $options = config('filesystems.disks.s3.visibility', 'public');
+            }
         }
 
         $fileName = $file->getClientOriginalName();

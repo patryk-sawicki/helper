@@ -1,3 +1,7 @@
+### 0.7.8
+
+Handle visibility parameter for S3/B2 compatibility in file uploads
+
 ### 0.7.7
 
 Modify Laravel framework requirement in composer.json to support version 12.00
