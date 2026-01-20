@@ -191,7 +191,7 @@ trait tableData
 
         /*Sort*/
         if($sort)
-            ($sortDir == 'asc') ? $query->orderBy($sortColumn) : $query->orderByDesc($sortColumn);
+            $this->applySortingToQuery($query, $sortColumn, $sortDir);
 
         /*Search*/
         if(!is_null($search))
@@ -262,5 +262,127 @@ trait tableData
         $query->whereHas($route, function($query) use ($colName, $value) {
             $query->where($colName, 'like', '%'.$value.'%');
         });
+    }
+
+    /**
+     * Apply sorting to the query, handling both simple columns and relation columns.
+     *
+     * @param Builder $query
+     * @param string $sortColumn
+     * @param string $sortDir
+     * @return void
+     */
+    protected function applySortingToQuery(Builder $query, string $sortColumn, string $sortDir): void
+    {
+        // If the column doesn't contain a dot, it's a simple column - use standard sorting
+        if (!str_contains($sortColumn, '.')) {
+            ($sortDir == 'asc') ? $query->orderBy($sortColumn) : $query->orderByDesc($sortColumn);
+            return;
+        }
+
+        // Column contains a dot - it's a relation
+        $parts = explode('.', $sortColumn);
+        $column = array_pop($parts);
+        $relationName = implode('.', $parts);
+
+        // Get the model instance from the query
+        $model = $query->getModel();
+
+        // Build the join for the relation and get the full column name
+        $sortColumnWithTable = $this->joinRelationForSorting($query, $model, $relationName, $column);
+
+        ($sortDir == 'asc') ? $query->orderBy($sortColumnWithTable) : $query->orderByDesc($sortColumnWithTable);
+    }
+
+    /**
+     * Join a relation table for sorting purposes.
+     *
+     * @param Builder $query
+     * @param Model $model
+     * @param string $relationName
+     * @param string $column
+     * @return string The full column name to use in orderBy
+     */
+    protected function joinRelationForSorting(Builder $query, Model $model, string $relationName, string $column): string
+    {
+        // Handle only simple (non-nested) relations for now
+        if (str_contains($relationName, '.')) {
+            // For nested relations, fall back to simple order (may not work correctly)
+            return $relationName . '.' . $column;
+        }
+
+        // Check if the relation method exists
+        if (!method_exists($model, $relationName)) {
+            return $relationName . '.' . $column;
+        }
+
+        $relation = $model->{$relationName}();
+        $parentTable = $model->getTable();
+
+        // Handle BelongsTo relation
+        if ($relation instanceof \Illuminate\Database\Eloquent\Relations\BelongsTo) {
+            $relatedTable = $relation->getRelated()->getTable();
+            $foreignKey = $relation->getForeignKeyName();
+            $ownerKey = $relation->getOwnerKeyName();
+
+            // Add left join if not already joined
+            if (!$this->hasJoin($query, $relatedTable)) {
+                $query->leftJoin(
+                    $relatedTable,
+                    "{$parentTable}.{$foreignKey}",
+                    '=',
+                    "{$relatedTable}.{$ownerKey}"
+                );
+            }
+
+            // Select main table to avoid ambiguity with id columns
+            $query->select("{$parentTable}.*");
+
+            return "{$relatedTable}.{$column}";
+        }
+
+        // Handle HasOne relation
+        if ($relation instanceof \Illuminate\Database\Eloquent\Relations\HasOne) {
+            $relatedTable = $relation->getRelated()->getTable();
+            $foreignKey = $relation->getForeignKeyName();
+            $localKey = $relation->getLocalKeyName();
+
+            if (!$this->hasJoin($query, $relatedTable)) {
+                $query->leftJoin(
+                    $relatedTable,
+                    "{$parentTable}.{$localKey}",
+                    '=',
+                    "{$relatedTable}.{$foreignKey}"
+                );
+            }
+
+            $query->select("{$parentTable}.*");
+
+            return "{$relatedTable}.{$column}";
+        }
+
+        // For other relation types (HasMany, BelongsToMany, etc.), fall back to simple column
+        // These would require subqueries and more complex logic
+        return $relationName . '.' . $column;
+    }
+
+    /**
+     * Check if the query already has a join with the given table.
+     *
+     * @param Builder $query
+     * @param string $table
+     * @return bool
+     */
+    protected function hasJoin(Builder $query, string $table): bool
+    {
+        $joins = $query->getQuery()->joins ?? [];
+
+        foreach ($joins as $join) {
+            if ($join->table === $table) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

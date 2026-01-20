@@ -1,3 +1,8 @@
+### 0.4.2
+Table Data - Added support for sorting by relation columns (BelongsTo, HasOne).
+Previously, sorting by relation columns like `customer.surname` caused SQL errors.
+Now the trait automatically adds LEFT JOIN and properly references the related table column.
+
 ### 0.4.1.12
 Laravel 11 support.
 
