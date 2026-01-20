@@ -1,3 +1,9 @@
+### 0.7.9
+
+Table Data - Added support for sorting by relation columns (BelongsTo, HasOne).
+Previously, sorting by relation columns like `customer.surname` caused SQL errors.
+Now the trait automatically adds LEFT JOIN and properly references the related table column.
+
 ### 0.7.8
 
 Handle visibility parameter for S3/B2 compatibility in file uploads
