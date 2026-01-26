@@ -1,3 +1,7 @@
+### 0.7.10
+
+Added `prevent_upscale` configuration option for images. When set to `true`, images smaller than max_width/max_height will not be upscaled during WebP conversion or other processing. Default value is `false` to maintain backward compatibility.
+
 ### 0.7.9
 
 Table Data - Added support for sorting by relation columns (BelongsTo, HasOne).

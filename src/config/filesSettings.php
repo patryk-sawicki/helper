@@ -4,6 +4,7 @@ return [
     'images' => [
         'max_width' => 1280,
         'max_height' => 720,
+        'prevent_upscale' => false, // If true, images smaller than max dimensions won't be upscaled
     ],
 
     'thumbnailSizes' => [

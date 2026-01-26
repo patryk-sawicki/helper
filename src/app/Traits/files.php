@@ -105,7 +105,14 @@ trait files
                 $image = $manager->read($file);
 
                 if (!$preventResizing) {
-                    $image->scale(width: $max_width, height: $max_height);
+                    $preventUpscale = config('filesSettings.images.prevent_upscale', false);
+
+                    // Only scale if:
+                    // - upscaling is allowed (prevent_upscale = false), OR
+                    // - image is actually larger than max dimensions
+                    if (!$preventUpscale || $w > $max_width || $h > $max_height) {
+                        $image->scale(width: $max_width, height: $max_height);
+                    }
                 }
 
                 // Apply watermark if provided and not in 'source' relation
