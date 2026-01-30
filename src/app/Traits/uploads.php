@@ -5,6 +5,7 @@ namespace PatrykSawicki\Helper\app\Traits;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Intervention\Image\Drivers\Gd\Driver;
@@ -106,6 +107,7 @@ trait uploads
      *
      * @param string $location e.g. order_files
      * @param string $relationName e.g. files
+     * @return Collection Collection of created file models
      */
     public function addUploads(
         array $files,
@@ -115,18 +117,24 @@ trait uploads
         array $options = [],
         ?UploadedFile $watermark = null,
         int $watermarkOpacity = 70
-    ): void {
+    ): Collection {
+        $uploadedFiles = collect();
+
         foreach ($files as $file) {
-            $this->addUpload(
-                $file,
-                $location,
-                $relationName,
-                $categories,
-                options: $options,
-                watermark: $watermark,
-                watermarkOpacity: $watermarkOpacity
+            $uploadedFiles->push(
+                $this->addUpload(
+                    $file,
+                    $location,
+                    $relationName,
+                    $categories,
+                    options: $options,
+                    watermark: $watermark,
+                    watermarkOpacity: $watermarkOpacity
+                )
             );
         }
+
+        return $uploadedFiles;
     }
 
     /**

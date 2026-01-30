@@ -1,3 +1,13 @@
+### 0.7.11
+
+**Breaking change (minor):** `addUploads()` method now returns `Collection` instead of `void`.
+This is backward compatible - if you don't use the return value, nothing changes.
+
+The returned collection contains all created file models, which can be used to:
+- Get IDs of uploaded files immediately after upload
+- Associate files with other entities without time-based queries
+- Process uploaded files in the same request
+
 ### 0.7.10
 
 Added `prevent_upscale` configuration option for images. When set to `true`, images smaller than max_width/max_height will not be upscaled during WebP conversion or other processing. Default value is `false` to maintain backward compatibility.
