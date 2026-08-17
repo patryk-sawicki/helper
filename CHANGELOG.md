@@ -1,3 +1,16 @@
+### 0.7.12
+
+PHP 8.4 compatibility: five parameters in `files` and `uploads` traits used the implicit-nullable
+form (`int $x = null`), deprecated in 8.4 and a hard error in PHP 9. They are now written explicitly
+(`?int`, `?Model`).
+
+**No behaviour change.** PHP already resolved these parameters to nullable types, so the effective
+signature is identical — verified by reflection before and after (`type=?int`, `allowsNull=true`,
+`default=NULL`). Callers need no changes; the parameters accept exactly what they accepted before.
+
+Affected: `files::addFile()` (`$max_width`, `$max_height`, `$fileModel`), `uploads::addUpload()`
+(`$max_width`, `$max_height`).
+
 ### 0.7.11
 
 **Breaking change (minor):** `addUploads()` method now returns `Collection` instead of `void`.

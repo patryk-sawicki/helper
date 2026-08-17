@@ -35,15 +35,15 @@ trait files
         UploadedFile $file,
         string $location = 'files',
         string $relationName = 'files',
-        int $max_width = null,
-        int $max_height = null,
+        ?int $max_width = null,
+        ?int $max_height = null,
         bool $externalRelation = true,
         bool $forceWebP = true,
         bool $preventResizing = false,
         array $options = [],
         ?UploadedFile $watermark = null,
         int $watermarkOpacity = 70,
-        Model $fileModel = null
+        ?Model $fileModel = null
     ): Model {
         $storeWithExtension = config('filesSettings.store_with_extension', false);
 
