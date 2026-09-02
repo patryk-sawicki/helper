@@ -204,7 +204,7 @@ abstract class BaseFile extends Model
                     $thumbnail = $this->thumbnail($width, $height);
 
                     if (!is_null($class)) {
-                        $class = 'class="' . $class . '"';
+                        $class = 'class="' . e($class) . '"';
                     }
 
                     $sizes = !is_null($width) ? 'sizes="(max-width: ' . $width . 'px) 100vw, ' . $width . 'px"' : '';
@@ -212,7 +212,12 @@ abstract class BaseFile extends Model
                     $alt ??= $this->additional_properties?->alt;
                     $title ??= $this->additional_properties?->title;
 
-                    return '<img src="' . $url . '" ' . $srcset . ' ' . $sizes . ' ' . $class . ' alt="' . $alt . '" title="' . $title . '" style="' . $style . '" loading="' . $loading . '" width="' . $thumbnail->width . '" height="' . $thumbnail->height . '" fetchpriority="' . $fetchPriority . '">';
+                    // DC-1253: escape every ATTRIBUTE VALUE built here. alt/title carry the panel-entered
+                    // car name (via the `?? $car->name` fallback in the views) and were the reported XSS
+                    // sink; url/style/loading/fetchPriority are escaped too so the class cannot return
+                    // through another attribute. $srcset/$sizes/$class are already-formed `attr="..."`
+                    // fragments (see above) - escaping those would break the markup; width/height are ints.
+                    return '<img src="' . e($url) . '" ' . $srcset . ' ' . $sizes . ' ' . $class . ' alt="' . e($alt) . '" title="' . e($title) . '" style="' . e($style) . '" loading="' . e($loading) . '" width="' . $thumbnail->width . '" height="' . $thumbnail->height . '" fetchpriority="' . e($fetchPriority) . '">';
                 }
             );
     }
@@ -232,7 +237,9 @@ abstract class BaseFile extends Model
         $sizes = !is_null($width) ? 'imagesizes="(max-width: ' . $width . 'px) 100vw, ' . $width . 'px"' : '';
         $url = $fullUrl ? $this->fullUrl() : $this->url();
 
-        return '<link rel="preload" as="image" href="' . $url . '" imagesrcset="' . $this->srcset(
+        // DC-1253: escape the href value for parity with img(); imagesrcset/$sizes are generated
+        // internally from URLs and int widths, not from user input.
+        return '<link rel="preload" as="image" href="' . e($url) . '" imagesrcset="' . $this->srcset(
                 $fullUrl
             ) . '" ' . $sizes . '>';
     }
