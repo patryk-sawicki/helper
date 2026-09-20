@@ -1,3 +1,76 @@
+### 0.7.16
+
+**Security fix (tableData) — the column name paths over collections.** Upgrade from any earlier
+version. Column names arriving in the request were read off the model without being checked first,
+and in Eloquent reading an unknown name is not a plain property read: it falls through to relation
+resolution, which calls the method being named. Three routes reached it, all of them operating on an
+already-loaded collection, which is why 0.7.14 and 0.7.15 — which closed the query-builder and the
+eager-loading routes — left them open:
+
+- `filterTableDataForObjects()`, dotted branch: the part before the dot was read off the model to
+  walk into the relation;
+- `filterTableDataForObjects()`, final segment: the remaining name was read off the model the walk
+  landed on;
+- `getTableDataForObjects()`, collection sort: the name went to `sortBy()`, which reaches the same
+  read through `data_get()`.
+
+Methods a project mixes into its models through traits were reachable this way, including the ones
+`SoftDeletes` contributes, because the framework's own guard only covers methods declared on `Model`
+itself.
+
+**What happens now.** A column name is checked before it is read. A real attribute and an
+already-loaded relation are read as before — Eloquent resolves neither by calling a method, and a
+column may well share its name with an ordinary method of the model. Only a name that Eloquent would
+have to resolve as a relation has to clear the same allow-list that already guards sorting, `load()`
+and `whereHas()`. A name that does not clear it drops the row out of the filter in the search path,
+and sorts as `null` in the collection sort, leaving those rows in the order they arrived rather than
+running something. Two details of how the gate is applied:
+
+- the exemption for an already-loaded relation applies to the final name only: every segment before
+  it has to pass the allow-list regardless, because the same gate also feeds paths that `load()` and
+  `whereHas()` execute before anything is loaded;
+- both paths check every row rather than the first one, because a collection may hold more than one
+  class; the allow-list verdict is memoised per model class, opt-in list and path.
+
+**Behaviour change:** searching and sorting a collection by a relation that is not already loaded
+now require that relation to pass the allow-list — declared with a `Relation` return type, or listed
+in the model's `$sortableRelations`. A relation declared without a return type and without that
+opt-in stops matching and stops ordering, rather than being read; this is the same narrowing 0.7.14
+applied to sorting in the query builder, and it applies to every segment of a dotted column such as
+`translations.name`. Plain columns are unaffected, with one exception in the sort path described
+below. Two narrower changes come with it: rows that are not Eloquent models no longer take part in
+column search or ordering, and a column whose name is a `data_get()` wildcard (`*`, `{first}`,
+`{last}`) no longer orders anything, having never named a column in the first place.
+
+**Where a plain column does change — sorting by a dotted path.** The last segment of a dotted column
+is validated against a fresh instance of the related model, which carries no attributes yet, so a
+real column whose name is also an ordinary method of that model is not recognised as an attribute
+and sorts as `null`: a `value` column on a model that also declares `value(): string`, for example.
+Searching the same column is unaffected — there the last segment is checked against the rows that
+were actually loaded, where the attribute is present.
+
+**New trait surface.** The trait now contributes a protected property `$relationPathVerdicts` and
+two protected methods, `isReadableColumnPath()` and `isReadableColumnName()`, to every class using
+it. A class of your own declaring either method silently takes precedence over the trait's version
+and reopens the gate; an incompatible property of the same name is a fatal error.
+
+**Rejections are logged.** A refused column is written once per request as a `warning` with the
+model class and the column name — never the search phrase. Without it the narrowing is
+indistinguishable from missing data, and this release reaches most projects through a routine
+`composer update` rather than a deliberate one.
+
+**Known remaining gaps.** This release closes the routes that read a column name off an
+already-loaded collection. Two known ones stay open and are being handled separately: a dotted path
+that walks through a `morphTo` relation is validated against the parent class rather than the type
+the row actually points at, and `filterQueryTableData()` still passes the requested column name to
+`where(..., 'like', ...)`, so a caller can probe any column of the table through the result count.
+Until both are closed, keep `searchable` in your table definitions limited to the columns that are
+genuinely meant to be searched, rather than leaving it on by default.
+
+**Verified against.** The gate depends on the order of checks inside Eloquent's `getAttribute()`.
+That order was read in laravel/framework 11.48 and 12.56, and exercised on 13.32.0; the behaviour
+is identical in all three, but only 13.32.0 was run.
+
 ### 0.7.15
 
 **Security fix (tableData) — three more paths to the same primitive.** 0.7.14 closed the sorting
@@ -42,6 +115,16 @@ an allow-list, decided without running the method — and the returned value is 
 **Behaviour change:** relations declared **without** a return type are no longer sortable by
 default. Either add the return type (`public function customer(): BelongsTo`) or list the method
 in a public `$sortableRelations` array on the model.
+
+### 0.7.13
+
+**Security fix (BaseFile) — XSS in `img()` and `imgPreload()`.** Attribute values were interpolated
+into the tag raw, so `alt` and `title` — which carry text entered in the admin panel — could close
+their attribute and open another one; a payload needs no angle brackets to do it
+(`Audi R8" onerror="…`). Every attribute value these two methods build is now escaped with `e()`:
+`src`/`href`, `alt`, `title`, `style`, `loading`, `fetchpriority` and the inner value of `class`.
+`srcset`, `sizes` and the `class` fragment itself stay as already-formed `attr="…"` strings, and
+`width`/`height` are integers taken from the thumbnail.
 
 ### 0.7.12
 

@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use ReflectionException;
 use ReflectionMethod;
 use ReflectionNamedType;
@@ -20,6 +21,20 @@ use ReflectionProperty;
 
 trait tableData
 {
+    /**
+     * Memoised verdicts of isAllowedRelationPath(), keyed by model class, opt-in list and path.
+     *
+     * @var array<string, bool>
+     */
+    protected array $relationPathVerdicts = [];
+
+    /**
+     * Column paths already reported as rejected, so one request logs each of them once.
+     *
+     * @var array<string, true>
+     */
+    protected array $reportedRejections = [];
+
     /**
      * Get searching relations.
      *
@@ -85,7 +100,21 @@ trait tableData
 
         /*Sort*/
         if ($sort) {
-            $elements = ($sortDir == 'asc') ? $elements->sortBy($sortColumn) : $elements->sortByDesc($sortColumn);
+            // sortBy() reads the name off each model through data_get(), so the gate runs per
+            // element rather than once for the first: a collection may hold more than one class.
+            $sortValue = function ($item) use ($sortColumn) {
+                if ($item instanceof Model && $this->isReadableColumnPath($item, $sortColumn)) {
+                    return data_get($item, $sortColumn);
+                }
+
+                if ($item instanceof Model) {
+                    $this->reportRejectedColumn($item, $sortColumn);
+                }
+
+                return null;
+            };
+
+            $elements = ($sortDir == 'asc') ? $elements->sortBy($sortValue) : $elements->sortByDesc($sortValue);
         }
 
         /*Search*/
@@ -147,6 +176,14 @@ trait tableData
                 return false;
             }
 
+            // The segment comes from the request and resolving it as a relation calls the method
+            // it names - see isAllowedRelationPath().
+            if (!$this->isAllowedRelationPath($item, $model)) {
+                $this->reportRejectedColumn($item, $colName);
+
+                return false;
+            }
+
             return $this->filterTableDataForObjects($item->{$model}, $column, $column['name']);
         }
 
@@ -160,10 +197,17 @@ trait tableData
             return false;
         }
 
-        // A column name is read as an attribute, never invoked. The previous "name()" syntax called
-        // $item->{$name}() for any column ending in parentheses, so a request could run delete() on
-        // every row of the collection. It also depended on PHPUnit's stringEndsWith(), a dev-only
-        // dependency, so this branch fatally errored on any --no-dev install anyway.
+        // The column name comes from the request - see isReadableColumnName().
+        if (!$item instanceof Model) {
+            return false;
+        }
+
+        if (!$this->isReadableColumnName($item, $colName)) {
+            $this->reportRejectedColumn($item, $colName);
+
+            return false;
+        }
+
         $testValue = mb_strtolower($item->{$colName}, 'UTF-8');
 
         $value = trim(json_encode(mb_strtolower($column['search']['value'] ?? '', 'UTF-8')), '"');
@@ -484,6 +528,118 @@ trait tableData
     }
 
     /**
+     * Report a column the allow-list refused, once per request and path.
+     *
+     * Rejection is otherwise invisible: the filter simply returns nothing and the sort stops
+     * ordering, which looks exactly like missing data. Since this package is installed through a
+     * caret constraint, the narrowing arrives with a routine update, and whoever gets the bug
+     * report needs something to find.
+     *
+     * The column name comes from the table definition, not from what the operator typed - the
+     * search phrase never goes in here, which is why 0.7.15 dropped its logger() calls.
+     *
+     * @param Model $item
+     * @param string $path
+     * @return void
+     */
+    protected function reportRejectedColumn(Model $item, string $path): void
+    {
+        $key = get_class($item) . '|' . $path;
+
+        if (isset($this->reportedRejections[$key])) {
+            return;
+        }
+
+        $this->reportedRejections[$key] = true;
+
+        Log::warning('tableData: column rejected by the relation allow-list', [
+            'model' => get_class($item),
+            'column' => $path,
+        ]);
+    }
+
+    /**
+     * Validate a full column path - relation segments plus the value at the end.
+     *
+     * Reading a dotted path walks relations and then reads one name off the model it lands on,
+     * so both halves need the gate: the segments as relations, the last one as data.
+     *
+     * @param Model $model
+     * @param string $path
+     * @return bool
+     */
+    protected function isReadableColumnPath(Model $model, string $path): bool
+    {
+        if ($path === '') {
+            return false;
+        }
+
+        // data_get() reads these as wildcards rather than names, so they identify no column and
+        // would make the sort key a serialisation of the row instead of one of its values.
+        if (preg_match('/[*{}\\\\]/', $path)) {
+            return false;
+        }
+
+        $segments = explode('.', $path);
+        $leaf = array_pop($segments);
+        $current = $model;
+
+        foreach ($segments as $segment) {
+            if (!$this->isAllowedRelationPath($current, $segment)) {
+                return false;
+            }
+
+            // An opt-in relation carries no declared return type, so re-check before getRelated().
+            $relation = $current->{$segment}();
+
+            if (!$relation instanceof Relation) {
+                return false;
+            }
+
+            $current = $relation->getRelated();
+        }
+
+        return $this->isReadableColumnName($current, $leaf);
+    }
+
+    /**
+     * Decide whether a single column name may be read off the model.
+     *
+     * getAttribute() reads the attribute array first, then hands unknown names to
+     * getRelationValue(), which returns a loaded relation as-is and only CALLS a relation method
+     * when isRelation() claims the name is one - isRelation() itself calls nothing, it is a
+     * method_exists() check. So three cases resolve without reaching a relation: a real attribute
+     * (a column may share its name with an ordinary method, and the attribute wins), a relation
+     * that is already loaded, and a name that is no relation at all. Only the remaining case - a
+     * relation that would have to be resolved - needs the allow-list that guards sorting, load()
+     * and whereHas(); a column may legitimately name one, because the search branch serialises a
+     * to-one relation with toJson().
+     *
+     * This does not promise that reading runs nothing: an accessor declared for the name still
+     * runs, as it does anywhere else a model attribute is read. What it rules out is a name from
+     * the request selecting an arbitrary method of the model.
+     *
+     * The order of checks inside getAttribute() is what makes this hold; verified against
+     * laravel/framework 11.48, 12.56 and 13.32.
+     *
+     * @param Model $item
+     * @param string $name
+     * @return bool
+     */
+    protected function isReadableColumnName(Model $item, string $name): bool
+    {
+        if ($name === '') {
+            return false;
+        }
+
+        if (array_key_exists($name, $item->getAttributes()) || $item->relationLoaded($name)) {
+            return true;
+        }
+
+        return !$item->isRelation($name) || $this->isAllowedRelationPath($item, $name);
+    }
+
+    /**
      * Validate a dotted relation path, one segment at a time, against the same gate as sorting.
      *
      * Both eager loading and whereHas() resolve a relation by CALLING the method the request
@@ -499,23 +655,35 @@ trait tableData
             return false;
         }
 
+        // Asked once per row of the collection, so the method reflection and the Relation objects
+        // built below are memoised away; reading the opt-in list for the key is what remains. The
+        // verdict depends on the class, that list and the path - never on the row's data - and the
+        // list is in the key because $sortableRelations may be declared per instance. An instance
+        // property rather than a static one: the path comes from the request, so these keys must
+        // not outlive the request in a long-running worker.
+        $cacheKey = get_class($model) . '|' . implode(',', $this->declaredSortableRelations($model)) . '|' . $path;
+
+        if (array_key_exists($cacheKey, $this->relationPathVerdicts)) {
+            return $this->relationPathVerdicts[$cacheKey];
+        }
+
         $current = $model;
 
         foreach (explode('.', $path) as $segment) {
             if (!$this->isSortableRelation($current, $segment)) {
-                return false;
+                return $this->relationPathVerdicts[$cacheKey] = false;
             }
 
             $relation = $current->{$segment}();
 
             if (!$relation instanceof Relation) {
-                return false;
+                return $this->relationPathVerdicts[$cacheKey] = false;
             }
 
             $current = $relation->getRelated();
         }
 
-        return true;
+        return $this->relationPathVerdicts[$cacheKey] = true;
     }
 
     /**
