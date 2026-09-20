@@ -12,8 +12,7 @@ use Illuminate\Support\Facades\Cache;
 use ReflectionException;
 use ReflectionMethod;
 use ReflectionNamedType;
-
-use function PHPUnit\Framework\stringEndsWith;
+use ReflectionProperty;
 
 /*
  * Trait for getting data by api to data tables.
@@ -125,7 +124,7 @@ trait tableData
         $elements = $elements->take($length);
 
         /*Load relations*/
-        $elements->load($relations);
+        $elements->load($this->filterRelationPaths($elements->first(), $relations));
 
         return [$elements, $draw, $total, $filtered];
     }
@@ -161,9 +160,11 @@ trait tableData
             return false;
         }
 
-        $testValue = stringEndsWith('()')->evaluate($colName, '', true) ?
-            mb_strtolower($item->{trim($colName, '()')}(), 'UTF-8') :
-            mb_strtolower($item->{$colName}, 'UTF-8');
+        // A column name is read as an attribute, never invoked. The previous "name()" syntax called
+        // $item->{$name}() for any column ending in parentheses, so a request could run delete() on
+        // every row of the collection. It also depended on PHPUnit's stringEndsWith(), a dev-only
+        // dependency, so this branch fatally errored on any --no-dev install anyway.
+        $testValue = mb_strtolower($item->{$colName}, 'UTF-8');
 
         $value = trim(json_encode(mb_strtolower($column['search']['value'] ?? '', 'UTF-8')), '"');
         $value2 = trim(mb_strtolower($column['search']['value'] ?? '', 'UTF-8'), '"');
@@ -228,8 +229,6 @@ trait tableData
                 foreach ($request->columns as $column) {
                     if ($column['searchable'] == '1') {
                         $colName = $column['name'];
-                        logger($colName);
-                        logger($column);
 
                         $query->orWhere(function (Builder $query) use ($colName, $search) {
                             $this->filterQueryTableData($query, $colName, $search);
@@ -274,7 +273,7 @@ trait tableData
         $elements = $query->get();
 
         /*Load relations*/
-        $elements->load($relations);
+        $elements->load($this->filterRelationPaths($query->getModel(), $relations));
 
         return [$elements, $draw, $total, $filtered];
     }
@@ -288,6 +287,12 @@ trait tableData
 
         $route = substr($colName, 0, strrpos($colName, '.'));
         $colName = substr($colName, strrpos($colName, '.') + 1);
+
+        // whereHas() resolves the relation by calling $model->{$route}(), so an unchecked route
+        // would invoke any no-argument method named in the request. Same gate as sorting.
+        if (!$this->isAllowedRelationPath($query->getModel(), $route)) {
+            return;
+        }
 
         $query->whereHas($route, function ($query) use ($colName, $value) {
             $query->where($colName, 'like', '%' . $value . '%');
@@ -435,8 +440,7 @@ trait tableData
         }
 
         // Explicit opt-in on the model, for relations declared without a return type.
-        if (property_exists($model, 'sortableRelations')
-            && in_array($name, (array) $model->sortableRelations, true)) {
+        if (in_array($name, $this->declaredSortableRelations($model), true)) {
             return true;
         }
 
@@ -449,6 +453,88 @@ trait tableData
         $returns = $returnType->getName();
 
         return $returns === Relation::class || is_subclass_of($returns, Relation::class);
+    }
+
+    /**
+     * Read the model's $sortableRelations opt-in list whatever its visibility.
+     *
+     * Eloquent's __get() turns a read of a protected property into an attribute lookup that
+     * yields null, so a protected or private list would silently behave as an empty one.
+     *
+     * @param Model $model
+     * @return array
+     */
+    protected function declaredSortableRelations(Model $model): array
+    {
+        if (!property_exists($model, 'sortableRelations')) {
+            return [];
+        }
+
+        try {
+            $property = new ReflectionProperty($model, 'sortableRelations');
+        } catch (ReflectionException) {
+            return [];
+        }
+
+        if ($property->isStatic()) {
+            return (array) $property->getValue();
+        }
+
+        return (array) $property->getValue($model);
+    }
+
+    /**
+     * Validate a dotted relation path, one segment at a time, against the same gate as sorting.
+     *
+     * Both eager loading and whereHas() resolve a relation by CALLING the method the request
+     * names, so every segment has to be proven a relation before the path is handed to Eloquent.
+     *
+     * @param Model|null $model
+     * @param string $path
+     * @return bool
+     */
+    protected function isAllowedRelationPath(?Model $model, string $path): bool
+    {
+        if (is_null($model) || $path === '') {
+            return false;
+        }
+
+        $current = $model;
+
+        foreach (explode('.', $path) as $segment) {
+            if (!$this->isSortableRelation($current, $segment)) {
+                return false;
+            }
+
+            $relation = $current->{$segment}();
+
+            if (!$relation instanceof Relation) {
+                return false;
+            }
+
+            $current = $relation->getRelated();
+        }
+
+        return true;
+    }
+
+    /**
+     * Keep only the relation paths that are safe to hand to Eloquent.
+     *
+     * @param Model|null $model
+     * @param array $paths
+     * @return array
+     */
+    protected function filterRelationPaths(?Model $model, array $paths): array
+    {
+        if (is_null($model)) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            $paths,
+            fn ($path) => is_string($path) && $this->isAllowedRelationPath($model, $path)
+        ));
     }
 
     /**

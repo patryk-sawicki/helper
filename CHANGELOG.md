@@ -1,3 +1,28 @@
+### 0.7.15
+
+**Security fix (tableData) — three more paths to the same primitive.** 0.7.14 closed the sorting
+path; eager loading and column search reached the identical "call any no-argument method on the
+model" primitive by other routes, all of them present since at least 0.6.0:
+
+- `getTableRelations()` fed every dotted column name straight to `$elements->load()`, and
+  `Builder::getRelation()` resolves a relation by calling `$model->newInstance()->$name()`.
+  `columns[i][name]=save.id` alone — no sorting, no search — inserted an empty record.
+- `filterQueryTableData()` passed the part before the last dot to `whereHas()`, which calls
+  `$model->{$relation}()` with no check of its own.
+- `filterTableDataForObjects()` invoked `$item->{$name}()` for any column name ending in
+  parentheses, so `columns[i][name]=delete()` plus a search term deleted every row of the
+  collection.
+
+Relation paths handed to `load()` and `whereHas()` are now validated segment by segment with the
+same allow-list as sorting, walking the relation chain. The `name()` column syntax is removed
+outright: no caller used it, and it depended on PHPUnit's `stringEndsWith()` — a `require-dev`
+package referenced from production code, so that branch fatally errored on any `--no-dev` install.
+
+Also in this release: the leftover `logger($colName); logger($column);` debug calls are gone (they
+wrote the operator's search term, which may be a customer's e-mail or phone number, to
+`laravel.log`), and `$sortableRelations` is now read through reflection, so a `protected` or
+`private` list works instead of silently resolving to an empty array through Eloquent's `__get()`.
+
 ### 0.7.14
 
 **Security fix (tableData).** Sorting by a relation column invoked a model method whose name came
