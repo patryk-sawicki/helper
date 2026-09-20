@@ -6,8 +6,12 @@ namespace PatrykSawicki\Helper\app\Traits;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use ReflectionException;
+use ReflectionMethod;
+use ReflectionNamedType;
 
 use function PHPUnit\Framework\stringEndsWith;
 
@@ -337,12 +341,18 @@ trait tableData
             return $relationName . '.' . $column;
         }
 
-        // Check if the relation method exists
-        if (!method_exists($model, $relationName)) {
+        // The sort column comes straight from the request, so the method is only ever invoked
+        // once it is proven to be an Eloquent relation. See isSortableRelation().
+        if (!$this->isSortableRelation($model, $relationName)) {
             return $relationName . '.' . $column;
         }
 
         $relation = $model->{$relationName}();
+
+        if (!$relation instanceof Relation) {
+            return $relationName . '.' . $column;
+        }
+
         $parentTable = $model->getTable();
 
         // Handle BelongsTo relation
@@ -390,6 +400,55 @@ trait tableData
         // For other relation types (HasMany, BelongsToMany, etc.), fall back to simple column
         // These would require subqueries and more complex logic
         return $relationName . '.' . $column;
+    }
+
+    /**
+     * Decide whether $name may be invoked on $model while resolving a sortable relation.
+     *
+     * The sort column is attacker-controlled: it arrives as columns[i][name] in the request.
+     * Calling an arbitrary method whose name merely exists on the model turns sorting into a
+     * "call any no-argument method" primitive (save(), push(), and anything a project trait adds).
+     *
+     * This gate is therefore an allow-list, never a deny-list of known-dangerous names: a method
+     * is invoked only when its DECLARED return type proves it is an Eloquent relation, which is
+     * knowable without running it. Relations declared without a return type are not sortable by
+     * default; a model opts them in explicitly through a public $sortableRelations array.
+     *
+     * @param Model $model
+     * @param string $name
+     * @return bool
+     */
+    protected function isSortableRelation(Model $model, string $name): bool
+    {
+        if (!method_exists($model, $name)) {
+            return false;
+        }
+
+        try {
+            $method = new ReflectionMethod($model, $name);
+        } catch (ReflectionException) {
+            return false;
+        }
+
+        if (!$method->isPublic() || $method->isStatic() || $method->getNumberOfRequiredParameters() > 0) {
+            return false;
+        }
+
+        // Explicit opt-in on the model, for relations declared without a return type.
+        if (property_exists($model, 'sortableRelations')
+            && in_array($name, (array) $model->sortableRelations, true)) {
+            return true;
+        }
+
+        $returnType = $method->getReturnType();
+
+        if (!$returnType instanceof ReflectionNamedType || $returnType->isBuiltin()) {
+            return false;
+        }
+
+        $returns = $returnType->getName();
+
+        return $returns === Relation::class || is_subclass_of($returns, Relation::class);
     }
 
     /**

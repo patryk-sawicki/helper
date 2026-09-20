@@ -1,3 +1,23 @@
+### 0.7.14
+
+**Security fix (tableData).** Sorting by a relation column invoked a model method whose name came
+straight from the request. `joinRelationForSorting()` checked `method_exists()` and then called
+`$model->{$name}()` **before** verifying the result was a relation, so `columns[i][name]=save.id`
+made the sort parameter call `save()` — reproduced end to end on a `POST /admin/*/data` endpoint,
+where it inserted an empty record and fired the model observers. Any no-argument method reachable
+on the model was callable the same way, including `push()` and the `saveChanges()` /
+`saveCreatedInfo()` / `saveDeletionInfo()` helpers projects add through traits. Introduced in 0.7.9
+together with relation sorting; 0.7.8 and earlier passed the value to `orderBy()` only and are
+unaffected.
+
+A method is now invoked only once its **declared return type** proves it is an Eloquent relation —
+an allow-list, decided without running the method — and the returned value is still checked with
+`instanceof Relation` afterwards.
+
+**Behaviour change:** relations declared **without** a return type are no longer sortable by
+default. Either add the return type (`public function customer(): BelongsTo`) or list the method
+in a public `$sortableRelations` array on the model.
+
 ### 0.7.12
 
 PHP 8.4 compatibility: five parameters in `files` and `uploads` traits used the implicit-nullable
