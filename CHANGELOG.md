@@ -1,5 +1,11 @@
 ### 0.7.16
 
+**Laravel 13 support.** The framework constraint now accepts `^13.00` alongside `^11.00` and
+`^12.00`. Nothing else in the package changed for Laravel 13 itself: the sorting allow-list keys
+off the declared return type of the model's own methods rather than framework behaviour, and it was
+re-checked against v13.32.0. Note that Laravel 13 itself requires PHP >= 8.3, while this package still
+declares `php: ^8.2` — on PHP 8.2 Composer keeps resolving to Laravel 12, which is intended.
+
 **Security fix (tableData) — the column name paths over collections.** Upgrade from any earlier
 version. Column names arriving in the request were read off the model without being checked first,
 and in Eloquent reading an unknown name is not a plain property read: it falls through to relation

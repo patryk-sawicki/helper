@@ -5,6 +5,10 @@ A set of helpful tools for PHP.
 ## Requirements
 
 * PHP 8.2 or higher with json extensions.
+* Laravel 11, 12 or 13.
+
+Laravel 13 requires PHP 8.3 or higher. On PHP 8.2 Composer resolves this package against Laravel 11
+or 12 instead, which is intended rather than a conflict.
 
 ## Installation
 
