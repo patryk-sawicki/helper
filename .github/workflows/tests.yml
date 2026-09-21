@@ -1,0 +1,68 @@
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# The suite only reads the repository; the default token is wider than that.
+permissions:
+  contents: read
+
+# A second push to the same branch makes the first run's answer worthless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  phpunit:
+    name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { php: '8.2', laravel: '11', testbench: '^9.0' }
+          - { php: '8.3', laravel: '11', testbench: '^9.0' }
+          - { php: '8.3', laravel: '12', testbench: '^10.0' }
+          - { php: '8.3', laravel: '13', testbench: '^11.0' }
+          - { php: '8.4', laravel: '13', testbench: '^11.0' }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: json, sqlite3, pdo_sqlite, gd
+          coverage: none
+
+      # The whole Laravel 11 line carries open advisories with no 11.x release fixing them
+      # (CVE-2026-48019 among them), so Composer refuses to install it. The package keeps
+      # supporting that line, so the job that proves it has to say so out loud.
+      - name: Allow the Laravel 11 line despite its open advisories
+        if: matrix.laravel == '11'
+        run: composer config audit.block-insecure false
+
+      - name: Pin the framework and testbench for this row
+        run: |
+          composer require --no-update --dev "orchestra/testbench:${{ matrix.testbench }}"
+          composer require --no-update "laravel/framework:^${{ matrix.laravel }}.0"
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      # Diagnostics must never be what fails the job: the step runs under `bash -e`, so an
+      # unlucky `composer show` would report a red suite that is actually green.
+      - name: Report what actually got installed
+        run: |
+          for package in laravel/framework orchestra/testbench phpunit/phpunit; do
+            echo -n "$package: "
+            composer show "$package" 2>/dev/null | grep -E '^versions' | sed 's/versions *: *//' || echo '(unavailable)'
+          done
+        continue-on-error: true
+
+      - name: Run the test suite
+        run: vendor/bin/phpunit --display-deprecations

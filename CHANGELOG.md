@@ -1,3 +1,205 @@
+### 0.7.17
+
+**At a glance**
+
+- two security fixes in `tableData`: relation paths crossing a `MorphTo`, and the column name
+  reaching `LIKE`, `ORDER BY` and `whereHas` unchecked;
+- one more, found late: the collection's global search matched a substring of the whole serialised
+  row, password hash included;
+- **behaviour change** — a refused column filter now returns an empty list instead of an
+  unfiltered one;
+- **behaviour change** — sorting by a column of a to-many relation, or by a nested relation path,
+  no longer orders (it never ordered correctly);
+- **behaviour change** — a column the model hides, or that is no column of the table, stops being
+  searchable; a small floor of names is refused whatever the model declares;
+- **something to do, not just to read**: the gate follows your models' `$hidden`/`$visible`/casts.
+  Go through the models you list.
+
+**Security fix (tableData) — relation paths that cross a `MorphTo`.** Upgrade from any earlier
+version. The gate that proves each segment of a dotted column is a real relation walked the path
+with `$current->{$segment}()->getRelated()`. Eloquent resolves a `MorphTo` against the type column
+of the row the relation was built from, so on an instance without that column filled — which is
+every instance `getRelated()` itself produces — it hands back the parent model. Everything past
+such a segment was therefore proven against a class that never holds it, while `data_get()` read
+the same path off the real target at runtime and called the method it named there. The package
+ships `BaseFile::model(): MorphTo`, so `<files relation>.model.<anything>` was reachable.
+
+**What happens now.** A `MorphTo` whose type column is filled is followed to its real target, and
+the rest of the path is proven against that. A `MorphTo` whose type column is empty ends the path:
+`isAllowedRelationPath()` still allows one as the final segment, because nothing is validated past
+it and eager loading a morph is a legitimate thing to ask for, and refuses one anywhere earlier.
+`isReadableColumnPath()` refuses it outright, since there the segment is always followed by the
+leaf. Nothing is queried to decide this — the type is already on the row.
+
+**Behaviour change:** a column that walks through a morph relation reached from another relation,
+such as `files.model.name`, stops matching and stops ordering. The single-segment case a table
+actually uses — a column like `model.name` on a row that carries its `model_type` — is unaffected.
+
+**Two consequences of that rule, both of which used to leak across rows.** A verdict about a path
+that crosses a morph belongs to the ROW, because the target comes from the row's own type column:
+
+- the memoised verdicts are keyed by model class, so such a verdict is now returned and thrown
+  away rather than stored. Stored, the first row asked answered for every later one in both
+  directions — a `true` opening a path the next row does not have, and a `false` closing one it
+  does;
+- both entry points proved the eager-loading paths on one model — `$elements->first()` in
+  `getTableDataForObjects()`, the query's prototype in `getTableData()` — and handed them to
+  `load()`, which applies them to the whole collection. A collection holds more than one
+  class and more than one morph target, and the request decides which row is first, through the
+  sort, the search and the page. Paths are now the intersection of what every row allows.
+
+**Security fix (tableData) — the column name as a LIKE and ORDER BY identifier.** Upgrade from any
+earlier version. `filterQueryTableData()` put `columns[i][name]` straight into
+`where($name, 'like', …)`, and `applySortingToQuery()` put it into `orderBy()`. The identifier is
+wrapped by the query grammar, so this was never injection: it is that a client free to name any
+column of the table turns the number of rows that survive the filter into an oracle and reads a
+secret out of it one character per request — `password` and `remember_token` included. The
+`searchable` flag beside the name gated nothing, arriving in the same request. The column on the
+far side of a `whereHas()` was not checked at all, so a name that is no column at all reached SQL.
+The same reading existed over collections, where `isReadableColumnName()` accepted any attribute
+the row carried.
+
+**What happens now.** Both paths consult an allow-list derived from the model rather than from the
+request, and each path derives it from what that path can legitimately address:
+
+- a query filter or sort accepts the columns the table really has, less the ones the model declares
+  as not for output through `$hidden` and the ones cast as `hashed` or `encrypted`. A schema that
+  cannot be read yields an empty list rather than a guess;
+- a collection filter or sort judges a real column of the table the same way, by the allow-list.
+  Only a name that is NO column — a counted relation, an accessor materialised into the
+  attributes — is judged by what the row carries, since there is no schema entry to look up.
+
+A model that needs a different set declares a public `$searchableColumns`, which replaces the
+derived list outright, the way `$sortableRelations` opts relations in. Declaring it as `null`
+makes no choice and falls back to the derived list; an empty array does mean "allow nothing".
+Every refusal goes through `reportRejectedColumn()`, so it appears in the log rather than looking
+like missing data.
+
+**Details of the two lists.** `$hidden`, `$visible` and `$casts` belong to the instance, not to
+the class, so the derived list is not memoised by class name; the schema read, which is the
+expensive part, is keyed by those lists as well. A `$visible` allow-list is narrowed against the
+SCHEMA, because every caller on the query path hands in a prototype — `Builder::getModel()`,
+`Relation::getRelated()` — that carries no attributes to take a complement from. An encrypting
+cast given as a class string is recognised too, since `AsEncryptedArrayObject::class` does not
+begin with the word `encrypted`.
+
+**A column is judged by the table, not by the row.** A name the table really has clears or fails
+the allow-list whether or not this instance carries it as an attribute — the leaf of a dotted
+column is validated against a prototype, so "not loaded here" must never read as "not a column".
+Only a name that is NO column of the table — an accessor, a counted relation — is judged by what
+the row carries. Where a column shares its name with a method, the relation gate still applies,
+because on a row without that attribute Eloquent resolves the read by calling it.
+
+**ORDER BY needed more than the plain branch.** `applySortingToQuery()` checks the column when it
+has no dot, but `joinRelationForSorting()` answered `"$relationName.$column"` in four branches
+where it could not build a join — a nested path, a name that is no relation, a name that resolves
+to no `Relation`, and any to-many relation. The grammar wraps those two halves as table and
+column, so the string was not a fallback: `helper_users.password` sorted real rows by the hash
+without touching a relation, and a name that is no relation ordered by a table that does not
+exist, which is a 500 the request chose. All four branches now refuse, and the caller leaves the
+query unordered. **Behaviour change:** sorting by a column of a to-many relation, or by a nested
+relation path, stops ordering — neither ever produced a correct order.
+
+**Behaviour change:** searching or sorting by a column the model hides, or by a name that is no
+column of the table, stops working. In practice this is `password` and `remember_token`; a project
+that lists a column outside its table — an accessor addressed through the query builder — has to
+declare `$searchableColumns` for it.
+
+**A floor under the derived list.** The list follows the model's own `$hidden`, `$visible` and
+casts — so a model that declares none of them still exposes every column of its table, and models
+like that exist, with a password column among the rest. A small set of names is therefore refused
+whatever the model says: `password`, `password_hash`, `remember_token`, `salt`, `secret`, `api_key`, `app_key`, `auth_key`,
+`hmac_key`, `signature_key`, `recovery_codes` and `two_factor_recovery_codes`, plus anything
+ending in `_token`, `_secret` or `_password` and anything starting with `secret_`. `_hash` and
+`_key` are deliberately NOT suffixes: they name identifiers far more often than secrets, and a
+survey of the consumer migrations on hand found `short_hash`, `pdf_hash`, `idempotency_key` and
+`checkout_key`, all of them columns a list is searched by. This is not a deny-list standing in for
+the allow-list — it only ever removes from
+what the allow-list already permits, including from an explicitly declared `$searchableColumns`,
+since "always blocked" cannot mean "unless someone writes it down". The names live in
+`ALWAYS_BLOCKED_COLUMNS` and `ALWAYS_BLOCKED_SUFFIXES`, read through `static::`, so a subclass can
+narrow or empty them.
+
+**Still, read this before assuming you are done.** Outside that floor, what the gate protects is
+exactly what your models declare. A model listed by `getTableData()` or `getTableDataForObjects()`
+that declares no `$hidden`, no `$visible` and no encrypting cast still offers every one of its
+columns to a search — go through the models you list and give them one.
+
+**A refused filter narrows; it no longer disappears.** Returning without adding a condition left
+the surrounding `where()` group empty, and an empty group is dropped — so the filter vanished and
+the list came back UNFILTERED, with `recordsFiltered` equal to `recordsTotal` and nothing visibly
+wrong. On the one path where the client is asking for FEWER rows that is the wrong direction, and
+it disagreed with the collection path, which has always dropped the row on a refusal. Both now
+narrow. **Behaviour change:** a column filter the gate refuses returns an empty list rather than
+an unfiltered one. In the global search, where each column is one member of an OR, a refused
+column simply contributes nothing and the others still match.
+
+**The collection's global search had no gate at all.** It matches a substring of the whole
+serialised row, and `toArray()` of a model that declares no `$hidden` carries the password hash —
+so the search read that hash one character per request, for exactly the population the floor above
+exists for. Measured: `bcrypt$X` matched, `bcrypt$XY` matched, `bcrypt$QQ` did not. The row is now
+serialised through the floor before being matched, at every level, relations included. Eloquent's
+own `__toString()` only repeats `toJson()`, so it is folded in only where a model declares one of
+its own.
+
+**The refusal trace is no longer an amplifier.** A refused column is logged, because a gate that
+goes quiet is indistinguishable from missing data — but the column name comes from the request,
+and so does the number of names. Laravel's `LineFormatter` runs with `allowInlineLineBreaks`,
+which turns an escaped newline in the context back into a real one, so a name carrying one wrote
+a second physical line that reads like a log record of its own. Control characters are stripped
+and the name is truncated; a single request writes at most 20 records plus one saying the rest
+were dropped. Measured before the change: 1000 refused columns in one request wrote 1000 records
+and 179 kB, and an 8000-character name wrote an 8 kB line. The record also carries a `reason` now
+— `relation`, `column`, `path`, `nested-sort` or `to-many-sort` — because after this release most
+refusals no longer come from the relation allow-list, and a trace naming the wrong gate sends
+whoever reads it the wrong way.
+
+**Reading a morph type no longer calls anything.** `getAttribute()` falls through to relation
+resolution for a name it does not find among the attributes, and that calls a method carrying that
+name. The morph check asked it for the type column, so a model with a method named like its own
+type column answered every table request with an uncaught `LogicException`. The type is read
+straight from the attribute array now.
+
+**New trait surface.** The trait now contributes three protected properties —
+`$searchableColumnCache`, `$tableColumnCache` and `$rejectionsReported` — four protected
+constants — `MAX_REJECTION_REPORTS`, `MAX_REJECTION_NAME_LENGTH`, `ALWAYS_BLOCKED_COLUMNS` and
+`ALWAYS_BLOCKED_SUFFIXES` — and eleven protected methods: `declaredSearchableColumns()`,
+`blockedColumns()`, `searchableColumns()`, `tableColumns()`, `isSearchableColumn()`,
+`isAlwaysBlockedColumn()`, `isMorphTargetUnknown()`, `relatedModelForPath()`, `sanitiseForLog()`,
+`matchNoRows()`, `searchableRepresentation()`, `stripAlwaysBlocked()` and
+`filterRelationPathsForEveryRow()`. `reportRejectedColumn()` takes a third argument, the reason.
+The default (`unspecified`) lets existing CALLS keep working; an override declaring two parameters
+is incompatible with the trait's signature regardless of defaults and has to be widened.
+
+A class of your own declaring any of those METHODS silently takes precedence over the trait's
+version, as with the surface 0.7.16 added. The two CONSTANTS behave differently, and neither way
+is "taking precedence": a class using the trait and declaring one of them is a fatal error at
+composition, while a subclass may redefine it — the trait reads them through `static::`, so that
+redefinition is honoured and is the supported way to move the limits.
+
+`joinRelationForSorting()` now returns `?string` rather than `string`, returning null whenever it
+refuses. Return types are covariant, so an override declaring `: string` stays legal and needs no
+change — but it can no longer express a refusal, and one that keeps answering with a column name
+puts that name back into `ORDER BY`.
+
+**Verified on** Laravel 11.56.1, 12.69.2 and 13.32.0, each with the same set of checks run against
+the same synthetic models: the derived column list, the refusal of `password` in both LIKE and
+ORDER BY, the collection path, and all four morph cases. Results were identical across the three.
+
+**The package has tests now.** `phpunit.xml` described an application rather than this package —
+it pointed at a `tests/` directory that did not exist, measured coverage over `./app`, and carried
+attributes PHPUnit 10 removed; `phpunit/phpunit ^9.5` could not run on a Laravel 13 stack at all.
+It is now a package configuration, with `orchestra/testbench` and an in-memory SQLite database,
+and the security gates that 0.7.14, 0.7.15, 0.7.16 and this release put in place have regression
+tests: the relation allow-list, the searchable column list, the sorting gate, the morph paths and
+the refusal log — including the test that proves reading such a path directly really does run the
+method, which is what the gate exists to prevent. `.github/workflows/tests.yml` runs the suite
+against Laravel 11, 12 and 13.
+
+**A note on Laravel 11.** The constraint still accepts `^11.00`, deliberately: the projects still
+on that line are the ones this fix matters to most. That line is outside the framework's own
+security fix window — see the support matrix in the README before staying on it.
+
 ### 0.7.16
 
 **Laravel 13 support.** The framework constraint now accepts `^13.00` alongside `^11.00` and
