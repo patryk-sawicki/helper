@@ -27,10 +27,13 @@ whole watermark.
 first. It reads the source from the local disk only (`storage_path('app')`), so on S3 or another
 remote disk it returns `false` without changing anything. It rebuilds the main file at the source's
 full resolution, not within `max_width`×`max_height`. It recreates the thumbnails at the main-file
-size (`images.max_width`×`images.max_height`) instead of the sizes in `thumbnailSizes`. And it
-deletes the old files before writing the new ones: if it fails midway, the database is rolled back
-but the deleted files are not restored (the source is kept, so a later successful rebuild brings
-them back). These limits predate 0.7.18 and will be addressed separately.
+size (`images.max_width`×`images.max_height`) instead of the sizes in `thumbnailSizes`. It
+deletes the old files before writing the new ones: if an exception stops it midway, the database is
+rolled back but the deleted files are not restored (the source is kept, so a later successful
+rebuild brings them back). An `Error`, such as the `TypeError` described below, is not caught at
+all: the method throws with its transaction still open. And without a conversion it takes the
+watermark off instead of putting it on (see the known gap below). These limits predate 0.7.18 and
+will be addressed separately.
 
 **Thumbnails regenerated from an older file.** `regenerateThumbnails()`, and `rebuildFiles()`, which
 calls it, cut new thumbnails from the stored main file, which already carries its watermark, and
@@ -43,9 +46,33 @@ created, so this shows when you add a size to `thumbnailSizes` or thumbnails wer
 that is when it has to resize it or convert it to WebP. An image that needs neither is stored as
 uploaded, without the watermark, whatever its format: one that is already WebP, or one for which the
 conversion is off (`forceWebP: false`, `block_webp_conversion`, an extension listed in
-`forbidden_webp_extensions`), as long as it fits within `max_width`×`max_height`. The same holds for
-the main file in `rebuildFromSource()`, which runs with `preventResizing: true`: it is marked only
-when it is converted to WebP.
+`forbidden_webp_extensions`), as long as it fits within `max_width`×`max_height` (a larger one with
+the conversion off is not stored at all, see the known problem below). In `rebuildFromSource()` this
+goes further. The source is the original as uploaded, and the main file is rebuilt from it with
+`preventResizing: true`, so without a conversion the main file is replaced by an unmarked copy of the
+source at full resolution, even if it was marked before. Calling `rebuildFromSource(watermark: ...)`
+on such a file takes the mark off the main file, and off the thumbnails too when the source is WebP
+or blocked from the conversion in the configuration and fits within
+`images.max_width`×`images.max_height`.
+
+**Known problem, not fixed here.** When `addFile()` has to resize an image without converting it to
+WebP, saving it fails with a `TypeError`, with or without a watermark, after the file's database
+record has been created: the encoder is called with `null`, which intervention/image 3 does not
+accept. It dates from 0.5.0.0, which upgraded intervention/image; 0.7.18 does not change it. It hits
+every image that `addFile()` resizes while the conversion is off: every GIF, which
+`forbidden_webp_extensions` lists by default, every image once `block_webp_conversion` is set, and
+any image passed to `addFile()` with `forceWebP: false`. A
+main file is resized only when it is larger than `max_width`×`max_height`, and such an image is not
+stored at all. Thumbnails are always resized, to the sizes in `thumbnailSizes`, so `addUpload()` and
+`addUploads()` also fail on an image that fits, on the first thumbnail they create: with the default
+sizes, on any such image wider and taller than 64 px, or wider than 374 px. The main file and the
+source are stored by then, and the thumbnail's record is left pointing to a file that was never
+written. `regenerateThumbnails()`, and `rebuildFiles()`, which calls it, fail the same way whenever
+they create a thumbnail for a GIF main file, or for any main file once `block_webp_conversion` is
+set. `rebuildFromSource()` hits it on the thumbnails of a source larger than
+`images.max_width`×`images.max_height` when the conversion is blocked in the configuration, after it
+has written the main file as an unmarked copy of the source; `docs/rebuildFromSource.md` describes
+what that leaves behind.
 
 **Transparency under a translucent watermark.** Below 100% opacity the GD driver places the
 watermark through an intermediate copy without an alpha channel, so transparent areas of the image
@@ -59,6 +86,12 @@ at 70% opacity, a 4000×6000 portrait peaks at about 290 MB instead of 190 MB �
 6000×4000 landscape already did. This matters in `rebuildFromSource()`, which works at the source's
 full resolution; uploads resized to `max_width`×`max_height` are unaffected. Check `memory_limit`
 if you rebuild large portrait photos.
+
+**Tests.** The watermark is checked both on the composition and on the file `addFile()` stores, so
+the tests fail if `addFile()` stops marking images, or starts marking a source it converts to WebP
+(`addUpload()` stores the source unconverted, so it never reaches the watermark step). They are
+skipped without `gd` or `pdo_sqlite`, and the ones through `addFile()` also without WebP support in
+GD, which they convert to.
 
 The composition now lives in the protected `files::placeWatermarkOnImage()`. The signatures of
 `addFile()`, `addFiles()`, `addUpload()` and `rebuildFromSource()` are unchanged.

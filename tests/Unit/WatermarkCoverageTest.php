@@ -2,15 +2,20 @@
 
 namespace PatrykSawicki\Helper\Tests\Unit;
 
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Intervention\Image\Colors\Rgb\Channels\Green;
 use Intervention\Image\Colors\Rgb\Channels\Red;
 use Intervention\Image\Drivers\Gd\Driver;
 use Intervention\Image\ImageManager;
 use Intervention\Image\Interfaces\ImageInterface;
+use PatrykSawicki\Helper\Tests\Fixtures\WatermarkedOwner;
 use PatrykSawicki\Helper\Tests\Fixtures\WatermarkSubject;
 use PatrykSawicki\Helper\Tests\TestCase;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\RequiresFunction;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\Attributes\Test;
 
@@ -21,10 +26,12 @@ use PHPUnit\Framework\Attributes\Test;
  * an image taller than the watermark's own aspect ratio - every portrait, given a 3:2 watermark - the
  * bottom of the frame stayed unmarked and could be cropped off clean.
  *
- * The requirement is an attribute, not a skip inside setUp(): PHPUnit still runs tearDown() after a
+ * The requirements are attributes, not a skip inside setUp(): PHPUnit still runs tearDown() after a
  * skip raised there, and the base case's tearDown() needs the application setUp() never booted.
+ * pdo_sqlite is listed too, because the base case builds its tables on SQLite before any test runs.
  */
 #[RequiresPhpExtension('gd')]
+#[RequiresPhpExtension('pdo_sqlite')]
 class WatermarkCoverageTest extends TestCase
 {
     private ImageManager $manager;
@@ -37,10 +44,32 @@ class WatermarkCoverageTest extends TestCase
         parent::setUp();
 
         $this->manager = new ImageManager(new Driver());
+
+        // What addFile() writes, and reads back through createSlug(). The columns addFile() fills
+        // follow the package's migrations, so a regression that leaves one empty fails here too.
+        Schema::create('files', function (Blueprint $table) {
+            $table->id();
+            $table->string('name', 127);
+            $table->string('slug', 127)->unique();
+            $table->string('type', 7);
+            $table->string('mime_type', 63);
+            $table->string('file', 255);
+            $table->smallInteger('width')->unsigned()->nullable();
+            $table->smallInteger('height')->unsigned()->nullable();
+            $table->nullableMorphs('model');
+            $table->string('relation_type', 63)->nullable();
+        });
+
+        // The service provider is not loaded here, and addFile() needs the package's settings.
+        config(['filesSettings' => require __DIR__ . '/../../src/config/filesSettings.php']);
+
+        Storage::fake();
     }
 
     protected function tearDown(): void
     {
+        Schema::dropIfExists('files');
+
         foreach ($this->temporaryFiles as $path) {
             @unlink($path);
         }
@@ -108,6 +137,76 @@ class WatermarkCoverageTest extends TestCase
         $this->assertEqualsWithDelta(72, $this->darkRunThroughCentre($portrait), 2);
     }
 
+    public static function uploads(): array
+    {
+        // Upload size, then the size addFile() scales it to within 480x720.
+        return [
+            'portrait' => [960, 1440, 480, 720],
+            'landscape' => [1440, 960, 480, 320],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('uploads')]
+    #[RequiresFunction('imagewebp')]
+    public function add_file_stores_the_image_marked(int $width, int $height, int $storedWidth, int $storedHeight): void
+    {
+        // The tests above drive the composition directly; this one goes through addFile(), so it
+        // fails if addFile() stops calling it. It needs GD built with WebP, which addFile() converts to.
+        $owner = WatermarkedOwner::create(['name' => 'owner']);
+
+        $stored = $owner->addFile(
+            file: $this->imageFile($this->whiteImage($width, $height), 'photo.png'),
+            max_width: 480,
+            max_height: 720,
+            watermark: $this->solidWatermark(),
+            watermarkOpacity: 100
+        );
+
+        $this->assertSame('webp', $stored->type);
+        $this->assertSame([$storedWidth, $storedHeight], [$stored->width, $stored->height]);
+
+        $image = $this->manager->read(Storage::get($stored->file));
+        $this->assertSame([$storedWidth, $storedHeight], [$image->width(), $image->height()]);
+
+        foreach ($this->corners($storedWidth, $storedHeight) as $name => [$x, $y]) {
+            $color = $image->pickColor($x, $y);
+
+            // Stored as WebP, which is lossy: red comes back near red, white would keep green high.
+            $this->assertGreaterThan(200, $color->channel(Red::class)->value(), "{$width}x{$height}, {$name}");
+            $this->assertLessThan(60, $color->channel(Green::class)->value(), "{$width}x{$height}, {$name}");
+        }
+    }
+
+    #[Test]
+    #[RequiresFunction('imagewebp')]
+    public function add_file_leaves_the_source_unmarked(): void
+    {
+        // addUpload() stores the source without a conversion or a watermark, so it never reaches
+        // the watermark step. This test forces it there on purpose: the conversion to WebP sends the
+        // source through the same branch as a marked image, so only the relation name keeps the
+        // watermark off it.
+        $owner = WatermarkedOwner::create(['name' => 'owner']);
+
+        $stored = $owner->addFile(
+            file: $this->imageFile($this->whiteImage(480, 720), 'photo.png'),
+            relationName: 'source',
+            watermark: $this->solidWatermark(),
+            watermarkOpacity: 100
+        );
+
+        $this->assertSame('webp', $stored->type);
+
+        $image = $this->manager->read(Storage::get($stored->file));
+
+        foreach ($this->corners(480, 720) as $name => [$x, $y]) {
+            $color = $image->pickColor($x, $y);
+
+            // WebP is lossy, so white comes back near white rather than exact.
+            $this->assertGreaterThan(240, $color->channel(Green::class)->value(), $name);
+        }
+    }
+
     /**
      * The four corners and the centre - the points an unmarked band would leave out.
      *
@@ -134,7 +233,7 @@ class WatermarkCoverageTest extends TestCase
      */
     private function solidWatermark(): UploadedFile
     {
-        return $this->watermarkFile($this->manager->create(1500, 1000)->fill('ff0000'));
+        return $this->imageFile($this->manager->create(1500, 1000)->fill('ff0000'), 'watermark.png');
     }
 
     /**
@@ -148,18 +247,18 @@ class WatermarkCoverageTest extends TestCase
             $rectangle->background('000000');
         });
 
-        return $this->watermarkFile($watermark);
+        return $this->imageFile($watermark, 'watermark.png');
     }
 
-    private function watermarkFile(ImageInterface $watermark): UploadedFile
+    private function imageFile(ImageInterface $image, string $name): UploadedFile
     {
         // tempnam() creates the file it names; the PNG goes next to it, so both are removed.
         $base = tempnam(sys_get_temp_dir(), 'helper-watermark-');
         $path = $base . '.png';
         array_push($this->temporaryFiles, $base, $path);
-        $watermark->toPng()->save($path);
+        $image->toPng()->save($path);
 
-        return new UploadedFile($path, 'watermark.png', 'image/png', null, true);
+        return new UploadedFile($path, $name, 'image/png', null, true);
     }
 
     /**
