@@ -10,6 +10,7 @@ use Illuminate\Support\Str;
 use Intervention\Image\Drivers\Gd\Driver;
 use Intervention\Image\Encoders\WebpEncoder;
 use Intervention\Image\ImageManager;
+use Intervention\Image\Interfaces\ImageInterface;
 
 /*
  * Trait for saving files.
@@ -117,17 +118,7 @@ trait files
 
                 // Apply watermark if provided and not in 'source' relation
                 if ($watermark !== null && $relationName !== 'source') {
-                    $watermarkImage = $manager->read($watermark);
-                    // Scale watermark to be proportional to the image
-                    $watermarkWidth = $image->width();
-                    $watermarkHeight = ($watermarkWidth / $watermarkImage->width()) * $watermarkImage->height();
-                    $watermarkImage->scale(width: $watermarkWidth, height: $watermarkHeight);
-
-                    $positionX = 0;
-                    $positionY = 0;
-
-                    // Apply watermark
-                    $image->place($watermarkImage, 'top-left', $positionX, $positionY, $watermarkOpacity);
+                    $this->placeWatermarkOnImage($manager, $image, $watermark, $watermarkOpacity);
                 }
 
                 $format = null;
@@ -202,6 +193,27 @@ trait files
                 $watermarkOpacity
             );
         }
+    }
+
+    /**
+     * Place the watermark over the whole image.
+     *
+     * The watermark is scaled to cover both dimensions and cropped around its centre, so every part of
+     * the frame is marked whatever its orientation. Scaling it to the image's width alone (up to 0.7.17)
+     * left the bottom of any image taller than the watermark's own aspect ratio unmarked.
+     *
+     * @param int $opacity Watermark opacity (0-100)
+     */
+    protected function placeWatermarkOnImage(
+        ImageManager $manager,
+        ImageInterface $image,
+        UploadedFile $watermark,
+        int $opacity
+    ): void {
+        $watermarkImage = $manager->read($watermark);
+        $watermarkImage->cover($image->width(), $image->height());
+
+        $image->place($watermarkImage, 'center', 0, 0, $opacity);
     }
 
     protected function createSlug(string $name): string
