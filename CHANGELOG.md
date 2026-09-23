@@ -1,3 +1,68 @@
+### 0.7.18
+
+**Fix (files) — the watermark now covers the whole image.** `addFile()` scaled the watermark to the
+image's width and placed it at the top-left corner, so the watermark's height followed its own aspect
+ratio, not the image's. With a 3:2 watermark a 2:3 portrait was marked on its top 44% only, a 9:16 one
+on 37.5%, and the rest of the frame could be cropped off unmarked. Thumbnails had the same gap, since
+each goes through `addFile()` with its own width. The watermark is now scaled to **cover** both
+dimensions and placed in the **centre**, with the overflow cropped evenly on both sides.
+
+What changes in the output, for projects that pass `watermark:`:
+
+- an image taller than the watermark's aspect ratio (a portrait, for a landscape watermark) is marked
+  top to bottom, and shows the middle slice of the watermark at the same scale as a landscape of
+  the same height with the watermark's own aspect ratio — so the pattern is larger than in 0.7.17,
+  which fitted it to the width, and is cropped evenly at the sides;
+- an image with exactly the watermark's aspect ratio comes out identical to 0.7.17;
+- an image wider than the watermark's aspect ratio was already covered, but the overflow was cut off
+  the bottom; it is now cut evenly from the top and bottom, so the pattern shifts up by half of that.
+
+If you design the watermark image: `cover` crops it to each image's aspect ratio, cutting the sides
+on images taller than the watermark and the top and bottom on wider ones. Keep anything that must
+stay visible, such as a logo or a name, near the middle, or use a pattern that repeats across the
+whole watermark.
+
+**Files already stored are not touched.** Only files processed from now on get the new composition.
+`BaseFile::rebuildFromSource()` can re-mark an existing file from its source, but check its limits
+first. It reads the source from the local disk only (`storage_path('app')`), so on S3 or another
+remote disk it returns `false` without changing anything. It rebuilds the main file at the source's
+full resolution, not within `max_width`×`max_height`. It recreates the thumbnails at the main-file
+size (`images.max_width`×`images.max_height`) instead of the sizes in `thumbnailSizes`. And it
+deletes the old files before writing the new ones: if it fails midway, the database is rolled back
+but the deleted files are not restored (the source is kept, so a later successful rebuild brings
+them back). These limits predate 0.7.18 and will be addressed separately.
+
+**Thumbnails regenerated from an older file.** `regenerateThumbnails()`, and `rebuildFiles()`, which
+calls it, cut new thumbnails from the stored main file, which already carries its watermark, and
+mark them again when you pass `watermark:`. For a file stored before 0.7.18 the two marks no longer
+line up, the old one fitted to the width from the top and the new one covering the frame from the
+centre, unless the image has the watermark's own aspect ratio. Only missing thumbnails are
+created, so this shows when you add a size to `thumbnailSizes` or thumbnails were removed.
+
+**Known gap, not fixed here.** The watermark is applied only when `addFile()` processes the image,
+that is when it has to resize it or convert it to WebP. An image that needs neither is stored as
+uploaded, without the watermark, whatever its format: one that is already WebP, or one for which the
+conversion is off (`forceWebP: false`, `block_webp_conversion`, an extension listed in
+`forbidden_webp_extensions`), as long as it fits within `max_width`×`max_height`. The same holds for
+the main file in `rebuildFromSource()`, which runs with `preventResizing: true`: it is marked only
+when it is converted to WebP.
+
+**Transparency under a translucent watermark.** Below 100% opacity the GD driver places the
+watermark through an intermediate copy without an alpha channel, so transparent areas of the image
+come out opaque where the watermark covers them. That was already so, but only across the top band
+the watermark used to reach; it now applies to the whole image. Photos carry no transparency and
+are unaffected; a PNG or WebP with a transparent background is.
+
+**Memory on large portraits.** The watermark is now scaled to the full size of the image, so on an
+image taller than the watermark's aspect ratio it takes more memory than before. Measured with GD
+at 70% opacity, a 4000×6000 portrait peaks at about 290 MB instead of 190 MB — the same as a
+6000×4000 landscape already did. This matters in `rebuildFromSource()`, which works at the source's
+full resolution; uploads resized to `max_width`×`max_height` are unaffected. Check `memory_limit`
+if you rebuild large portrait photos.
+
+The composition now lives in the protected `files::placeWatermarkOnImage()`. The signatures of
+`addFile()`, `addFiles()`, `addUpload()` and `rebuildFromSource()` are unchanged.
+
 ### 0.7.17
 
 **At a glance**
