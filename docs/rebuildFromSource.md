@@ -113,16 +113,22 @@ database; files already deleted from storage are not restored (see Notes).
 An `Error` is not caught. The `TypeError` described in Notes propagates to the caller with the transaction still open,
 so the caller has to roll it back: note `DB::transactionLevel()` before the call, and in a `catch (\Throwable)` call
 `DB::rollBack($level)`, then rethrow or log. Wrapping the call in `DB::transaction()` alone is not enough, as that rolls
-back one level and leaves the method's own transaction open. In a long-running process, such as a queue worker, a
+back one level and leaves one transaction level open. In a long-running process, such as a queue worker, a
 transaction left open can keep every later write on that connection uncommitted. Running out of memory on a large image
 (see "Memory on large portraits" in the 0.7.18 changelog) is fatal: nothing can catch it, and the transaction is never
 committed.
 
 Rolling back restores the database only, not the disk. When the `TypeError` hits, the main file has already been
 written as an unmarked copy of the source at its full resolution. Its path is built from the location, the current
-date and the file's id, so a rebuild run on the day the file was stored, with the same location, leaves the restored
-record pointing to that unmarked copy; any other rebuild leaves it on the disk as an orphan. Until the problem is
-fixed, do not call `rebuildFromSource(watermark: ...)` for a GIF source, or with `block_webp_conversion` set.
+date and the file's id, so a rebuild run on the day the file was stored, with the same location (and, with
+`store_with_extension`, the same extension), leaves the restored record pointing to that unmarked copy; any other
+rebuild leaves it on the disk as an orphan.
+
+Until the problem is fixed, do not call `rebuildFromSource()` at all, with or without a watermark, when the conversion
+is blocked in the configuration (`block_webp_conversion` is set, or the source's extension is listed in
+`forbidden_webp_extensions`) and the source is larger than `images.max_width`×`images.max_height`. Do not call it with
+`watermark:` either when the main file will not be converted to WebP (see Notes), as the rebuild then takes the
+watermark off the main file instead of putting it on.
 
 ## Notes
 

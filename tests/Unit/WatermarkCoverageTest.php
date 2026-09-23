@@ -62,6 +62,8 @@ class WatermarkCoverageTest extends TestCase
 
         // The service provider is not loaded here, and addFile() needs the package's settings.
         config(['filesSettings' => require __DIR__ . '/../../src/config/filesSettings.php']);
+        // The file reads FILES_SETTINGS_BLOCK_WEBP_CONVERSION; the tests convert to WebP whatever it says.
+        config(['filesSettings.block_webp_conversion' => false]);
 
         Storage::fake();
     }
