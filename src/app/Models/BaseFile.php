@@ -290,16 +290,23 @@ abstract class BaseFile extends Model
             return false;
         }
 
-        $sourceFilePath = $sourceFile->fullStoragePatch();
-        if (!file_exists($sourceFilePath)) {
-            Log::info('Source file does not exist: ' . $sourceFilePath);
+        // The source lives on the disk addFile() writes to (the default one, e.g. S3), not
+        // necessarily under storage_path('app'), so it is checked and read through Storage.
+        if (!$this->sourceExistsOnDisk($sourceFile)) {
             return false;
         }
 
-        // Begin transaction to ensure data consistency
-        DB::beginTransaction();
+        // Image processing needs a local path, so the source is copied to a temporary file
+        // before anything is deleted: a failed download leaves the stored files as they were.
+        $sourceFilePath = $this->copySourceToTemporaryFile($sourceFile);
+        if ($sourceFilePath === null) {
+            return false;
+        }
 
         try {
+            // Begin transaction to ensure data consistency
+            DB::beginTransaction();
+
             // Create UploadedFile instance from source file
             $uploadedFile = new UploadedFile(
                 $sourceFilePath,
@@ -340,7 +347,9 @@ abstract class BaseFile extends Model
             if (explode('/', $this->mime_type)[0] == 'image' && !str_contains($this->mime_type, 'svg')) {
                 $thumbnailSizes = config('filesSettings.thumbnailSizes', []);
                 $thumbnailFiles = [];
-                [$fileWidth, $fileHeight] = getimagesize($this->fullStoragePatch());
+                // addFile() records the size of what it stored; the stored file itself may be remote.
+                $fileWidth = $this->width;
+                $fileHeight = $this->height;
 
                 // Prepare array of files for thumbnail generation
                 foreach ($thumbnailSizes as $thumbnailSize) {
@@ -372,6 +381,73 @@ abstract class BaseFile extends Model
             DB::rollBack();
             Log::error('Error rebuilding file from source: ' . $e->getMessage());
             return false;
+        } finally {
+            // Also runs when an Error, which is not caught above, propagates to the caller.
+            @unlink($sourceFilePath);
         }
+    }
+
+    /**
+     * Check that the source file is on the storage disk.
+     *
+     * An error the disk reports, such as a lost connection to S3, counts as a missing source, so the
+     * rebuild returns false before changing anything, as it does when the source cannot be read.
+     */
+    protected function sourceExistsOnDisk(self $sourceFile): bool
+    {
+        try {
+            $exists = Storage::exists($sourceFile->file);
+        } catch (Exception $e) {
+            Log::info('Could not check source file ' . $sourceFile->file . ' (' . $e->getMessage() . ')');
+            return false;
+        }
+
+        if (!$exists) {
+            Log::info('Source file does not exist: ' . $sourceFile->file);
+        }
+
+        return $exists;
+    }
+
+    /**
+     * Copy the source file from the storage disk to a local temporary file.
+     *
+     * @return string|null Path of the copy, or null if the source could not be copied
+     */
+    protected function copySourceToTemporaryFile(self $sourceFile): ?string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'helper-rebuild-');
+        if ($path === false) {
+            Log::info('Could not create a temporary file for source file: ' . $sourceFile->file);
+            return null;
+        }
+
+        $input = null;
+        $copied = false;
+        $reason = '';
+
+        try {
+            $input = Storage::readStream($sourceFile->file);
+            // Given a stream, file_put_contents() copies it in chunks, so the source is never held
+            // in memory whole.
+            $copied = is_resource($input) && file_put_contents($path, $input) !== false;
+        } catch (Exception $e) {
+            $reason = ' (' . $e->getMessage() . ')';
+        } finally {
+            if (is_resource($input)) {
+                fclose($input);
+            }
+            // Also runs when an Error propagates, so a failed copy never stays behind.
+            if (!$copied) {
+                @unlink($path);
+            }
+        }
+
+        if (!$copied) {
+            Log::info('Could not copy source file to a temporary file: ' . $sourceFile->file . $reason);
+            return null;
+        }
+
+        return $path;
     }
 }

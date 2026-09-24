@@ -42,15 +42,18 @@ public function rebuildFromSource(
 
 ## Return Value
 
-- **bool**: Returns `true` if the rebuild was successful, and `false` if the source file is missing or an `Exception`
-  is thrown. An `Error`, such as the `TypeError` described in Notes, is not caught and propagates to the caller (see
+- **bool**: Returns `true` if the rebuild was successful, and `false` if the file has no source record, the source
+  file is missing from the disk, the disk fails while checking or reading it, the temporary copy cannot be created,
+  or an `Exception` is thrown during the rebuild. In every case but the last nothing has been changed yet; each is
+  logged. An `Error`, such as the `TypeError` described in Notes, is not caught and propagates to the caller (see
   Error Handling).
 
 ## Behavior
 
 The method performs the following operations:
 
-1. Checks if the source file exists
+1. Checks if the source file exists on the storage disk, and copies it to a temporary local file (removed when the
+   method returns or throws; a fatal error, such as running out of memory, leaves it in `sys_get_temp_dir()`)
 2. Creates a database transaction for data consistency
 3. Deletes all existing thumbnails (both files and database records)
 4. Processes the main file:
@@ -66,7 +69,18 @@ The method performs the following operations:
 ## Requirements
 
 - The file must have a source file relationship
-- The source file must exist on disk
+- The file must belong to its owner through the `model` morph, and the owner must be found (not soft-deleted): the
+  main file is rebuilt through `$this->model->addFile()`, so without an owner the method throws an `Error` after the
+  old files have been deleted, with its transaction still open
+- The owner must drop silently the key that `addFile(externalRelation: false)` writes onto it. For the default `files`
+  relation, or any other `morphMany` or `hasMany` one, that key is on the file's side (`model_id`), a column the owner
+  does not have. A `$fillable` that leaves it out, or a `$guarded` that lists some columns, drops it. With
+  `$guarded = []` or after `Model::unguard()` it reaches the query and fails; with neither `$fillable` nor `$guarded`
+  set, or with `Model::preventSilentlyDiscardingAttributes()` (part of `Model::shouldBeStrict()`) on, a
+  `MassAssignmentException` is thrown. Either way the method returns `false` after the old files have been deleted,
+  and the records it rolls back point to them
+- The source file must exist on the default storage disk, the one `addFile()` writes to (local, S3 or another)
+- Room in `sys_get_temp_dir()` for a copy of the source
 - Thumbnail sizes should be configured in `config('filesSettings.thumbnailSizes')`
 
 ## Example Usage
@@ -110,6 +124,9 @@ The method uses a database transaction to ensure data consistency. If an `Except
 transaction is rolled back, the error is logged, and the method returns `false`. This prevents partial updates in the
 database; files already deleted from storage are not restored (see Notes).
 
+The source is checked and copied before the transaction starts. An exception the disk throws there, such as a lost
+connection to S3, is logged and the method returns `false` without having changed anything or opened a transaction.
+
 An `Error` is not caught. The `TypeError` described in Notes propagates to the caller with the transaction still open,
 so the caller has to roll it back: note `DB::transactionLevel()` before the call, and in a `catch (\Throwable)` call
 `DB::rollBack($level)`, then rethrow or log. Wrapping the call in `DB::transaction()` alone is not enough, as that rolls
@@ -149,8 +166,13 @@ watermark off the main file instead of putting it on.
   the unmarked main file is written; the method catches only `Exception`, so it neither returns
   `false` nor rolls back its transaction (see Error Handling, and "Known problem" in the 0.7.18
   changelog)
-- The source is read from the local disk (`storage_path('app')`). On S3 or another remote disk it is
-  not found and the method returns `false` without changing anything
+- The source is read through `Storage` from the default disk, so the rebuild works the same on S3 or
+  another remote disk as on a local one (since 0.7.19; before, it looked under `storage_path('app')`
+  only and returned `false` elsewhere). It is downloaded to a temporary file before anything is
+  deleted, so a source that cannot be read leaves the stored files as they were
+- Each call downloads, decodes, marks and encodes the source at its full resolution and uploads the main file and every
+  thumbnail. Rebuild many files, such as a whole gallery, in a queued job, one file per job, rather than in one HTTP
+  request, where `max_execution_time` or a proxy timeout can leave them partly rebuilt
 - The main file is rebuilt at the source's full resolution, not within `max_width`×`max_height`
 - Thumbnails are recreated at the main-file size (`images.max_width`×`images.max_height`), not at the
   sizes in `thumbnailSizes`; one is created for each configured size smaller than the main file
