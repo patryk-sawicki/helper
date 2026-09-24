@@ -269,11 +269,15 @@ abstract class BaseFile extends Model
     /**
      * Rebuild file and its thumbnails from source file.
      *
+     * @param string $location Storage location, e.g. uploads
+     * @param string $relationName Relation the file belongs to, e.g. files
      * @param bool $forceWebP Convert to WebP if possible
      * @param array $options Storage options
      * @param UploadedFile|null $watermark Watermark file
      * @param int $watermarkOpacity Watermark opacity (0-100)
      * @return bool Success status
+     * @throws Exception When the transaction cannot be opened; nothing has been changed yet
+     * @throws \Error Not caught, e.g. the TypeError in docs/rebuildFromSource.md; its transaction stays open
      */
     public function rebuildFromSource(
         string $location = 'uploads',
@@ -290,88 +294,204 @@ abstract class BaseFile extends Model
             return false;
         }
 
-        $sourceFilePath = $sourceFile->fullStoragePatch();
-        if (!file_exists($sourceFilePath)) {
-            Log::info('Source file does not exist: ' . $sourceFilePath);
+        // The source lives on the disk addFile() writes to (the default one, e.g. S3), not
+        // necessarily under storage_path('app'), so it is checked and read through Storage.
+        if (!$this->sourceExistsOnDisk($sourceFile)) {
             return false;
         }
 
-        // Begin transaction to ensure data consistency
-        DB::beginTransaction();
+        // Image processing needs a local path, so the source is copied to a temporary file
+        // before anything is deleted: a failed download leaves the stored files as they were.
+        $sourceFilePath = $this->copySourceToTemporaryFile($sourceFile);
+        if ($sourceFilePath === null) {
+            return false;
+        }
 
         try {
-            // Create UploadedFile instance from source file
-            $uploadedFile = new UploadedFile(
-                $sourceFilePath,
-                $sourceFile->name,
-                $sourceFile->mime_type,
-                0,
-                true
-            );
+            // Begin transaction to ensure data consistency. It is opened outside the try below, so
+            // an exception from opening it propagates and the rollBack() there cannot undo a
+            // transaction of the caller's instead.
+            DB::beginTransaction();
 
-            // Delete all thumbnails
-            foreach ($this->thumbnails as $thumbnail) {
-                // Delete file from storage
-                Storage::delete($thumbnail->file);
-                // Delete record
-                $thumbnail->delete();
-            }
+            try {
+                // Create UploadedFile instance from source file
+                $uploadedFile = new UploadedFile(
+                    $sourceFilePath,
+                    $sourceFile->name,
+                    $sourceFile->mime_type,
+                    0,
+                    true
+                );
 
-            // Remove old file
-            Storage::delete($this->file);
+                // Delete all thumbnails
+                foreach ($this->thumbnails as $thumbnail) {
+                    // Delete file from storage
+                    Storage::delete($thumbnail->file);
+                    // Delete record
+                    $thumbnail->delete();
+                }
 
-            // Process main file using the addFile method from files trait
-            $this->model->addFile(
-                file: $uploadedFile,
-                location: $location,
-                relationName: $relationName, // Using 'files' as we're updating the main file
-                max_width: null, // No resizing for main file
-                max_height: null,
-                externalRelation: false, // We want to update this model
-                forceWebP: $forceWebP,
-                preventResizing: true, // Don't resize the main file
-                options: $options,
-                watermark: $watermark,
-                watermarkOpacity: $watermarkOpacity,
-                fileModel: $this
-            );
+                // Remove old file
+                Storage::delete($this->file);
 
-            // Generate thumbnails if this is an image
-            if (explode('/', $this->mime_type)[0] == 'image' && !str_contains($this->mime_type, 'svg')) {
-                $thumbnailSizes = config('filesSettings.thumbnailSizes', []);
-                $thumbnailFiles = [];
-                [$fileWidth, $fileHeight] = getimagesize($this->fullStoragePatch());
+                // Process main file using the addFile method from files trait
+                $this->model->addFile(
+                    file: $uploadedFile,
+                    location: $location,
+                    relationName: $relationName, // Using 'files' as we're updating the main file
+                    max_width: null, // No resizing for main file
+                    max_height: null,
+                    externalRelation: false, // We want to update this model
+                    forceWebP: $forceWebP,
+                    preventResizing: true, // Don't resize the main file
+                    options: $options,
+                    watermark: $watermark,
+                    watermarkOpacity: $watermarkOpacity,
+                    fileModel: $this
+                );
 
-                // Prepare array of files for thumbnail generation
-                foreach ($thumbnailSizes as $thumbnailSize) {
-                    if ((is_null($thumbnailSize['width']) || $thumbnailSize['width'] < $fileWidth) &&
-                        (is_null($thumbnailSize['height']) || $thumbnailSize['height'] < $fileHeight)) {
-                        // Add the file to the array for each valid thumbnail size
-                        $thumbnailFiles[] = $uploadedFile;
+                // Generate thumbnails if this is an image
+                if (explode('/', $this->mime_type)[0] == 'image' && !str_contains($this->mime_type, 'svg')) {
+                    $thumbnailSizes = config('filesSettings.thumbnailSizes', []);
+                    $thumbnailFiles = [];
+                    // addFile() records the size of what it stored; the stored file itself may be remote.
+                    $fileWidth = $this->width;
+                    $fileHeight = $this->height;
+
+                    // Prepare array of files for thumbnail generation
+                    foreach ($thumbnailSizes as $thumbnailSize) {
+                        if ((is_null($thumbnailSize['width']) || $thumbnailSize['width'] < $fileWidth) &&
+                            (is_null($thumbnailSize['height']) || $thumbnailSize['height'] < $fileHeight)) {
+                            // Add the file to the array for each valid thumbnail size
+                            $thumbnailFiles[] = $uploadedFile;
+                        }
+                    }
+
+                    // Use addFiles method from files trait to generate all thumbnails at once
+                    if (!empty($thumbnailFiles)) {
+                        $this->addFiles(
+                            files: $thumbnailFiles,
+                            location: $location,
+                            relationName: 'thumbnails',
+                            watermark: $watermark,
+                            watermarkOpacity: $watermarkOpacity
+                        );
                     }
                 }
 
-                // Use addFiles method from files trait to generate all thumbnails at once
-                if (!empty($thumbnailFiles)) {
-                    $this->addFiles(
-                        files: $thumbnailFiles,
-                        location: $location,
-                        relationName: 'thumbnails',
-                        watermark: $watermark,
-                        watermarkOpacity: $watermarkOpacity
-                    );
-                }
+                // Clear cache for this file
+                Cache::tags([self::$cacheName])->flush();
+
+                DB::commit();
+                return true;
+            } catch (Exception $e) {
+                DB::rollBack();
+                Log::error('Error rebuilding file from source: ' . $e->getMessage(), ['exception' => $e]);
+                return false;
             }
+        } finally {
+            // Also runs when an Error, which is not caught above, propagates to the caller.
+            @unlink($sourceFilePath);
+        }
+    }
 
-            // Clear cache for this file
-            Cache::tags([self::$cacheName])->flush();
-
-            DB::commit();
-            return true;
+    /**
+     * Check that the source file is on the storage disk.
+     *
+     * An error the disk reports, such as a lost connection to S3, counts as a missing source, so the
+     * rebuild returns false before changing anything, as it does when the source cannot be read.
+     */
+    protected function sourceExistsOnDisk(self $sourceFile): bool
+    {
+        try {
+            $exists = Storage::exists($sourceFile->file);
         } catch (Exception $e) {
-            DB::rollBack();
-            Log::error('Error rebuilding file from source: ' . $e->getMessage());
+            Log::warning(
+                'Could not check source file ' . $sourceFile->file . ' (' . $e->getMessage() . ')',
+                ['exception' => $e]
+            );
             return false;
         }
+
+        if (!$exists) {
+            Log::info('Source file does not exist: ' . $sourceFile->file);
+        }
+
+        return $exists;
+    }
+
+    /**
+     * Copy the source file from the storage disk to a local temporary file.
+     *
+     * @return string|null Path of the copy, or null if the source could not be copied
+     */
+    protected function copySourceToTemporaryFile(self $sourceFile): ?string
+    {
+        // When the directory cannot be used, tempnam() creates the file in the system's temporary
+        // directory instead and raises a notice, which Laravel turns into an ErrorException. The
+        // notice is silenced, so the method gets that file's path to clean up, or false.
+        $directory = $this->temporaryDirectory();
+        $path = @tempnam($directory, 'helper-rebuild-');
+        if ($path === false) {
+            Log::warning(
+                'Could not create a temporary file in ' . $directory . ' for source file: ' . $sourceFile->file
+            );
+            return null;
+        }
+        // The notice being silenced, the fallback is logged here, so a directory set on purpose,
+        // such as one with more room, is not given up without a trace.
+        if (realpath(dirname($path)) !== realpath($directory)) {
+            Log::warning(
+                'Could not use the temporary directory ' . $directory . ', the source is copied to '
+                . dirname($path) . ' instead'
+            );
+        }
+
+        $input = null;
+        $copied = false;
+        $error = null;
+
+        try {
+            $input = Storage::readStream($sourceFile->file);
+            // Given a stream, file_put_contents() copies it in chunks, so the source is never held
+            // in memory whole.
+            $written = is_resource($input) ? file_put_contents($path, $input) : false;
+            // A stream that ends early without an error would pass for a whole copy, so its length
+            // is checked against the size the disk reports. An S3 object stored with
+            // Content-Encoding: gzip may come back decoded, and then fails this check and is not rebuilt.
+            $copied = $written !== false && $written === Storage::size($sourceFile->file);
+        } catch (Exception $e) {
+            $error = $e;
+        } finally {
+            if (is_resource($input)) {
+                fclose($input);
+            }
+            // Also runs when an Error propagates, so a failed copy never stays behind.
+            if (!$copied) {
+                @unlink($path);
+            }
+        }
+
+        if (!$copied) {
+            $reason = $error ? ' (' . $error->getMessage() . ')' : '';
+            Log::warning(
+                'Could not copy source file to a temporary file: ' . $sourceFile->file . $reason,
+                $error ? ['exception' => $error] : []
+            );
+            return null;
+        }
+
+        return $path;
+    }
+
+    /**
+     * Directory the source is copied to for the rebuild.
+     *
+     * A file model can override it, e.g. with a directory that has more room. One that cannot be used
+     * is not an error: the copy is then made in the system's temporary directory and a warning is logged.
+     */
+    protected function temporaryDirectory(): string
+    {
+        return sys_get_temp_dir();
     }
 }

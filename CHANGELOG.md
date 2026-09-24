@@ -1,3 +1,93 @@
+### 0.7.19
+
+**Fix (files) — `rebuildFromSource()` works on S3 and any other disk.** The source was looked up
+under `storage_path('app')` with `file_exists()`, while `addFile()` stores files through `Storage`,
+on the default disk. On S3 or any other disk than a local one rooted at `storage_path('app')` the
+method logged `Source file does not exist` and returned `false` for every file, rebuilding nothing.
+It now checks the source with `Storage::exists()` and copies it through `Storage::readStream()` to a
+temporary file (in `sys_get_temp_dir()` by default, see `temporaryDirectory()` below), which image
+processing needs a local path for. The copy is made before anything is deleted, and its length has
+to match `Storage::size()`, so a source that cannot be read, or comes back shorter than the disk
+reports, leaves the stored files as they were. (An S3 object stored with `Content-Encoding: gzip`
+may come back decoded, at another length, and then fails that check and is not rebuilt; images are
+not normally stored that way.) The copy is removed when the method returns or throws; only a fatal
+error, such as running out of memory, leaves it behind. Its name starts with `helper-rebuild-` (on
+Windows, where `tempnam()` keeps only the first three characters of the prefix, it starts with
+`hel` and ends in `.tmp`, so check a file before deleting it). The size of the rebuilt main file,
+which decides which thumbnails to create, is taken from the file's record, which `addFile()` fills
+with the size it stored, instead of reading the stored file back from the local disk.
+
+What changes, for projects that call `rebuildFromSource()`:
+
+- on S3 (or another remote disk) the main file and the thumbnails are now rebuilt, so a rebuild run
+  after switching a watermark on or off changes the files stored there too; on a local disk rooted
+  at `storage_path('app')`, where the method already worked, the result is unchanged;
+- a local default disk with another root than `storage_path('app')`, such as
+  `storage_path('app/private')`, the default since Laravel 11, works too, as the source is read from
+  the disk it was written to;
+- each rebuild downloads the source once and needs room for it in the temporary directory
+  (`sys_get_temp_dir()` by default);
+- a call is no longer cheap on S3, where it used to return `false` at once: each one downloads,
+  decodes, marks and encodes the source at its full resolution, then uploads the main file and every
+  thumbnail. Rebuilding many files, such as a whole gallery, in one HTTP request can run past
+  `max_execution_time` or a proxy timeout and leave the gallery partly rebuilt, the file it stopped
+  on possibly with its old files deleted and the new ones not written, so run it in a queued job,
+  one file per job;
+- do not call it inside a transaction of your own, such as one around a loop over a gallery. The
+  method's own commit then commits nothing (the outer transaction decides), so when the outer
+  transaction is rolled back afterwards (an exception after the loop, a timeout, a fatal error, a
+  lost connection), the records of **every** file rebuilt in it go back to their old files, which
+  are already deleted, and the new files stay on the disk as orphans. The sources are kept, so
+  rebuilding those files again brings them back;
+- when the disk reports an error while checking or reading the source, such as a lost connection to
+  S3, the method logs it and returns `false` before anything has been changed, as for a missing source.
+
+**Still to check before calling it.** Every other limit listed in 0.7.18 stays: the main file is
+rebuilt at the source's full resolution, the thumbnails at the main-file size, the old files are
+deleted before the new ones are written, the mark is taken off instead of put on when the main file
+is not converted to WebP, the `TypeError` with the conversion blocked, and the memory a large
+portrait takes. On S3 they now apply, since the method used to stop before them.
+
+Two more, which 0.7.18 did not list, apply on every disk and make every call fail for the models they
+concern, after the old files have been deleted:
+
+- the file has to belong to an owner through its `model` morph, and the owner has to be found. The
+  main file is rebuilt through `$this->model->addFile()`, so for a file without an owner, or with a
+  soft-deleted one, the method throws an `Error` with its transaction still open;
+- the owner has to drop a key silently. With `externalRelation: false`, which the method passes,
+  `addFile()` writes the relation's key onto the owner, and for the default `files` relation, or any
+  other `morphMany` or `hasMany` one, that is the key on the file's side (`model_id`), a column the
+  owner does not have. A `$fillable` that leaves it out, or a `$guarded` that lists some columns,
+  drops it. With `$guarded = []` or after `Model::unguard()` it reaches the query and fails; with
+  neither `$fillable` nor `$guarded` set, or with `Model::preventSilentlyDiscardingAttributes()`
+  (part of `Model::shouldBeStrict()`) on, a `MassAssignmentException` is thrown. The method then
+  returns `false`, and the records it rolls back point to files it has already deleted.
+
+**Not changed.** `regenerateThumbnails()`, `rebuildFiles()` and the `files:rebuild` command still
+read files from `storage_path('app')`, so on a remote disk they skip every file.
+`FileController::downloadById()`, behind the `/file/{file}` route that `url()` and `srcset()` link
+to, still builds its path from `../storage/app`, so it is local only too. `fullStoragePatch()` and
+the signature of `rebuildFromSource()` are unchanged. `BaseFile` gains three protected methods,
+`sourceExistsOnDisk()`, `copySourceToTemporaryFile()` and `temporaryDirectory()` (where the copy is
+made, `sys_get_temp_dir()` by default; when the directory it returns cannot be used, the copy is
+made in `sys_get_temp_dir()` and a warning is logged); a file model that already has methods with
+those names now overrides them and has to keep their signatures. Disk errors, and a temporary file
+that cannot be created, are now logged as warnings, not as info, the disk errors with the exception
+in the log context; the error logged when the rebuild throws an `Exception` now carries it in the
+context too, and the message about the temporary file names the directory.
+
+**Tests.** `RebuildFromSourceTest` runs `addUpload()` and `rebuildFromSource()` on a fake S3 set as
+the default disk, and checks that the source is not under `storage_path('app')`, so a local lookup
+cannot pass it: a rebuild with a watermark marks the main file and the thumbnails, one without takes
+the mark off, the thumbnails follow the size of the rebuilt main file, not of the one it replaces,
+a missing or unreadable source, one read short, or a disk error while checking or reading it,
+returns `false` and keeps the files without leaving a copy behind, the temporary copy is removed,
+also when the rebuild throws an `Error`, a temporary directory that cannot be used does not stop the
+rebuild and is logged (the default one is not), and a transaction that cannot be opened propagates
+its exception and leaves the caller's transaction open. One more runs on a local default disk
+rooted at `storage_path('app')`, where the method already worked, to check the result there is
+unchanged. They are skipped without `gd`, `pdo_sqlite` or WebP support in GD.
+
 ### 0.7.18
 
 **Fix (files) — the watermark now covers the whole image.** `addFile()` scaled the watermark to the
