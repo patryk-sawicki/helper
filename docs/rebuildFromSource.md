@@ -18,6 +18,8 @@ when you need to regenerate files, apply different processing parameters, or add
  * @param \Illuminate\Http\UploadedFile|null $watermark Watermark file
  * @param int $watermarkOpacity Watermark opacity (0-100)
  * @return bool Success status
+ * @throws \Exception When the transaction cannot be opened; nothing has been changed yet
+ * @throws \Error Not caught, e.g. the TypeError described in Notes; its transaction stays open
  */
 public function rebuildFromSource(
     string $location = 'uploads',
@@ -45,16 +47,18 @@ public function rebuildFromSource(
 - **bool**: Returns `true` if the rebuild was successful, and `false` if the file has no source record, the source
   file is missing from the disk, the disk fails while checking or reading it, the temporary copy cannot be created,
   or an `Exception` is thrown during the rebuild. In every case but the last nothing has been changed yet; each is
-  logged. An `Error`, such as the `TypeError` described in Notes, is not caught and propagates to the caller (see
-  Error Handling).
+  logged. An `Error`, such as the `TypeError` described in Notes, is not caught and propagates to the caller, as does
+  an exception thrown while the transaction is being opened (see Error Handling).
 
 ## Behavior
 
 The method performs the following operations:
 
 1. Checks if the source file exists on the storage disk, and copies it to a temporary local file (removed when the
-   method returns or throws; a fatal error, such as running out of memory, leaves it in `sys_get_temp_dir()`)
-2. Creates a database transaction for data consistency
+   method returns or throws; a fatal error, such as running out of memory, leaves it in the temporary directory,
+   `sys_get_temp_dir()` by default, see Requirements)
+2. Creates a database transaction for data consistency (inside a transaction of the caller's, only a savepoint; see
+   Error Handling)
 3. Deletes all existing thumbnails (both files and database records)
 4. Processes the main file:
     - Converts to WebP if enabled and applicable
@@ -80,7 +84,9 @@ The method performs the following operations:
   `MassAssignmentException` is thrown. Either way the method returns `false` after the old files have been deleted,
   and the records it rolls back point to them
 - The source file must exist on the default storage disk, the one `addFile()` writes to (local, S3 or another)
-- Room in `sys_get_temp_dir()` for a copy of the source
+- Room in `sys_get_temp_dir()` for a copy of the source (or in the directory `temporaryDirectory()` returns, when a
+  file model overrides it; if that directory cannot be used, the copy is made in `sys_get_temp_dir()` and a warning
+  is logged)
 - Thumbnail sizes should be configured in `config('filesSettings.thumbnailSizes')`
 
 ## Example Usage
@@ -122,18 +128,28 @@ if ($result) {
 
 The method uses a database transaction to ensure data consistency. If an `Exception` is thrown during the process, the
 transaction is rolled back, the error is logged, and the method returns `false`. This prevents partial updates in the
-database; files already deleted from storage are not restored (see Notes).
+database; files already deleted from storage are not restored (see Notes). This holds only when the method runs
+outside any transaction: inside one of the caller's it gets a savepoint, and what happens to the records is decided by
+the caller's transaction (see below).
 
 The source is checked and copied before the transaction starts. An exception the disk throws there, such as a lost
 connection to S3, is logged and the method returns `false` without having changed anything or opened a transaction.
+An exception thrown while the transaction is being opened is not caught: it propagates to the caller, nothing has been
+changed, and a transaction of the caller's stays open.
+
+Do not call the method inside a transaction of your own, such as one around a loop over a gallery. The method's own
+commit then commits nothing (the outer transaction decides), and the old files of each rebuilt file are deleted at
+once. When the outer transaction is rolled back afterwards, by an exception after the loop, a timeout, a fatal error
+or a lost connection, the records of **every** file rebuilt in it go back to their old files, which no longer exist,
+and the new files stay on the disk as orphans. The sources are kept, so rebuilding those files again brings them back.
+Rebuild each file in a queued job of its own, outside any transaction.
 
 An `Error` is not caught. The `TypeError` described in Notes propagates to the caller with the transaction still open,
-so the caller has to roll it back: note `DB::transactionLevel()` before the call, and in a `catch (\Throwable)` call
-`DB::rollBack($level)`, then rethrow or log. Wrapping the call in `DB::transaction()` alone is not enough, as that rolls
-back one level and leaves one transaction level open. In a long-running process, such as a queue worker, a
-transaction left open can keep every later write on that connection uncommitted. Running out of memory on a large image
-(see "Memory on large portraits" in the 0.7.18 changelog) is fatal: nothing can catch it, and the transaction is never
-committed.
+so the caller has to roll it back: note `DB::transactionLevel()` before the call (which is made outside any
+transaction, as above), and in a `catch (\Throwable)` call `DB::rollBack($level)`, then rethrow or log. In a
+long-running process, such as a queue worker, a transaction left open can keep every later write on that connection
+uncommitted. Running out of memory on a large image (see "Memory on large portraits" in the 0.7.18 changelog) is
+fatal: nothing can catch it, and the transaction is never committed.
 
 Rolling back restores the database only, not the disk. When the `TypeError` hits, the main file has already been
 written as an unmarked copy of the source at its full resolution. Its path is built from the location, the current
@@ -169,14 +185,19 @@ watermark off the main file instead of putting it on.
 - The source is read through `Storage` from the default disk, so the rebuild works the same on S3 or
   another remote disk as on a local one (since 0.7.19; before, it looked under `storage_path('app')`
   only and returned `false` elsewhere). It is downloaded to a temporary file before anything is
-  deleted, so a source that cannot be read leaves the stored files as they were
+  deleted, and the copy's length has to match the size the disk reports, so a source that cannot
+  be read, or comes back shorter, leaves the stored files as they were. An S3 object stored with
+  `Content-Encoding: gzip` may come back decoded, at another length, and then fails that check and
+  is not rebuilt
 - Each call downloads, decodes, marks and encodes the source at its full resolution and uploads the main file and every
   thumbnail. Rebuild many files, such as a whole gallery, in a queued job, one file per job, rather than in one HTTP
-  request, where `max_execution_time` or a proxy timeout can leave them partly rebuilt
+  request, where `max_execution_time` or a proxy timeout can leave them partly rebuilt, and not inside a transaction,
+  whose rollback leaves every file rebuilt in it pointing to deleted files (see Error Handling)
 - The main file is rebuilt at the source's full resolution, not within `max_width`×`max_height`
 - Thumbnails are recreated at the main-file size (`images.max_width`×`images.max_height`), not at the
   sizes in `thumbnailSizes`; one is created for each configured size smaller than the main file
 - Old files are deleted before the new ones are written. If the rebuild fails with an `Exception`, the
   database changes are rolled back but the deleted files are not restored; the source is kept, so a
-  later successful rebuild brings them back
+  later successful rebuild brings them back. The same holds for a transaction of the caller's rolled
+  back after the method has returned `true`, and then for every file rebuilt in it
 - The method clears the cache for the file to ensure fresh data is returned after rebuilding

@@ -5,14 +5,17 @@ under `storage_path('app')` with `file_exists()`, while `addFile()` stores files
 on the default disk. On S3 or any other disk than a local one rooted at `storage_path('app')` the
 method logged `Source file does not exist` and returned `false` for every file, rebuilding nothing.
 It now checks the source with `Storage::exists()` and copies it through `Storage::readStream()` to a
-temporary file in `sys_get_temp_dir()`, which image processing needs a local path for. The copy is
-made before anything is deleted, so a source that cannot be read leaves the stored files as they
-were, and it is removed when the method returns or throws; only a fatal error, such as running
-out of memory, leaves it behind. Its name starts with `helper-rebuild-` (on Windows, where
-`tempnam()` keeps only the first three characters of the prefix, with `hel` and ends in `.tmp`, so
-check a file before deleting it). The size of the rebuilt main file, which decides which thumbnails to create, is taken from
-the file's record, which `addFile()` fills with the size it stored, instead of reading the stored
-file back from the local disk.
+temporary file (in `sys_get_temp_dir()` by default, see `temporaryDirectory()` below), which image
+processing needs a local path for. The copy is made before anything is deleted, and its length has
+to match `Storage::size()`, so a source that cannot be read, or comes back shorter than the disk
+reports, leaves the stored files as they were. (An S3 object stored with `Content-Encoding: gzip`
+may come back decoded, at another length, and then fails that check and is not rebuilt; images are
+not normally stored that way.) The copy is removed when the method returns or throws; only a fatal
+error, such as running out of memory, leaves it behind. Its name starts with `helper-rebuild-` (on
+Windows, where `tempnam()` keeps only the first three characters of the prefix, it starts with
+`hel` and ends in `.tmp`, so check a file before deleting it). The size of the rebuilt main file,
+which decides which thumbnails to create, is taken from the file's record, which `addFile()` fills
+with the size it stored, instead of reading the stored file back from the local disk.
 
 What changes, for projects that call `rebuildFromSource()`:
 
@@ -22,13 +25,20 @@ What changes, for projects that call `rebuildFromSource()`:
 - a local default disk with another root than `storage_path('app')`, such as
   `storage_path('app/private')`, the default since Laravel 11, works too, as the source is read from
   the disk it was written to;
-- each rebuild downloads the source once and needs room for it in `sys_get_temp_dir()`;
+- each rebuild downloads the source once and needs room for it in the temporary directory
+  (`sys_get_temp_dir()` by default);
 - a call is no longer cheap on S3, where it used to return `false` at once: each one downloads,
   decodes, marks and encodes the source at its full resolution, then uploads the main file and every
   thumbnail. Rebuilding many files, such as a whole gallery, in one HTTP request can run past
   `max_execution_time` or a proxy timeout and leave the gallery partly rebuilt, the file it stopped
   on possibly with its old files deleted and the new ones not written, so run it in a queued job,
   one file per job;
+- do not call it inside a transaction of your own, such as one around a loop over a gallery. The
+  method's own commit then commits nothing (the outer transaction decides), so when the outer
+  transaction is rolled back afterwards (an exception after the loop, a timeout, a fatal error, a
+  lost connection), the records of **every** file rebuilt in it go back to their old files, which
+  are already deleted, and the new files stay on the disk as orphans. The sources are kept, so
+  rebuilding those files again brings them back;
 - when the disk reports an error while checking or reading the source, such as a lost connection to
   S3, the method logs it and returns `false` before anything has been changed, as for a missing source.
 
@@ -57,18 +67,26 @@ concern, after the old files have been deleted:
 read files from `storage_path('app')`, so on a remote disk they skip every file.
 `FileController::downloadById()`, behind the `/file/{file}` route that `url()` and `srcset()` link
 to, still builds its path from `../storage/app`, so it is local only too. `fullStoragePatch()` and
-the signature of `rebuildFromSource()` are unchanged. `BaseFile` gains two protected methods,
-`sourceExistsOnDisk()` and `copySourceToTemporaryFile()`; a file model that already has methods with
-those names now overrides them and has to keep their signatures.
+the signature of `rebuildFromSource()` are unchanged. `BaseFile` gains three protected methods,
+`sourceExistsOnDisk()`, `copySourceToTemporaryFile()` and `temporaryDirectory()` (where the copy is
+made, `sys_get_temp_dir()` by default; when the directory it returns cannot be used, the copy is
+made in `sys_get_temp_dir()` and a warning is logged); a file model that already has methods with
+those names now overrides them and has to keep their signatures. Disk errors, and a temporary file
+that cannot be created, are now logged as warnings, not as info, the disk errors with the exception
+in the log context; the error logged when the rebuild throws an `Exception` now carries it in the
+context too, and the message about the temporary file names the directory.
 
 **Tests.** `RebuildFromSourceTest` runs `addUpload()` and `rebuildFromSource()` on a fake S3 set as
 the default disk, and checks that the source is not under `storage_path('app')`, so a local lookup
 cannot pass it: a rebuild with a watermark marks the main file and the thumbnails, one without takes
 the mark off, the thumbnails follow the size of the rebuilt main file, not of the one it replaces,
-a missing or unreadable source, or a disk error while checking it, returns `false` and keeps the
-files, and the temporary copy is removed, also when the rebuild throws an `Error`. One more runs on
-a local default disk rooted at `storage_path('app')`, where the method already worked, to check the
-result there is unchanged. They are skipped without `gd`, `pdo_sqlite` or WebP support in GD.
+a missing or unreadable source, one read short, or a disk error while checking or reading it,
+returns `false` and keeps the files without leaving a copy behind, the temporary copy is removed,
+also when the rebuild throws an `Error`, a temporary directory that cannot be used does not stop the
+rebuild and is logged (the default one is not), and a transaction that cannot be opened propagates
+its exception and leaves the caller's transaction open. One more runs on a local default disk
+rooted at `storage_path('app')`, where the method already worked, to check the result there is
+unchanged. They are skipped without `gd`, `pdo_sqlite` or WebP support in GD.
 
 ### 0.7.18
 

@@ -17,7 +17,8 @@ use PatrykSawicki\Helper\app\Models\BaseFile;
  * Two switches let a test steer the rebuild: $removeSourceBeforeCopy deletes the source from the
  * disk after rebuildFromSource() has found it and before it is read, so the real copy fails as an
  * unreadable source would; $throwOnThumbnails throws an Error once the main file has been rebuilt,
- * where the method no longer catches anything but an Exception.
+ * where the method no longer catches anything but an Exception. $temporaryDirectory, when set, is
+ * where the source is copied to, so a test can check a failed copy leaves nothing behind.
  */
 class RebuildableFile extends BaseFile
 {
@@ -26,6 +27,13 @@ class RebuildableFile extends BaseFile
     public static bool $removeSourceBeforeCopy = false;
 
     public static bool $throwOnThumbnails = false;
+
+    public static ?string $temporaryDirectory = null;
+
+    protected function temporaryDirectory(): string
+    {
+        return self::$temporaryDirectory ?? parent::temporaryDirectory();
+    }
 
     protected function copySourceToTemporaryFile(BaseFile $sourceFile): ?string
     {

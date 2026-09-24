@@ -5,8 +5,10 @@ namespace PatrykSawicki\Helper\Tests\Unit;
 use Error;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Intervention\Image\Colors\Rgb\Channels\Green;
@@ -15,6 +17,8 @@ use Intervention\Image\Drivers\Gd\Driver;
 use Intervention\Image\ImageManager;
 use Intervention\Image\Interfaces\ImageInterface;
 use League\Flysystem\UnableToCheckFileExistence;
+use League\Flysystem\UnableToReadFile;
+use League\Flysystem\UnableToRetrieveMetadata;
 use Mockery;
 use PatrykSawicki\Helper\Tests\Fixtures\RebuildableFile;
 use PatrykSawicki\Helper\Tests\Fixtures\RebuildOwner;
@@ -22,6 +26,7 @@ use PatrykSawicki\Helper\Tests\TestCase;
 use PHPUnit\Framework\Attributes\RequiresFunction;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\Attributes\Test;
+use RuntimeException;
 
 /**
  * rebuildFromSource() on a disk other than the local one (AA-271).
@@ -47,6 +52,9 @@ class RebuildFromSourceTest extends TestCase
     /** Directory under storage_path('app') the local-disk test writes to, removed after it. */
     private ?string $localDirectory = null;
 
+    /** Directory the rebuild copies the source to in the tests that set it, removed after them. */
+    private ?string $copyDirectory = null;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -55,6 +63,7 @@ class RebuildFromSourceTest extends TestCase
         RebuildableFile::$lastTemporaryCopy = null;
         RebuildableFile::$removeSourceBeforeCopy = false;
         RebuildableFile::$throwOnThumbnails = false;
+        RebuildableFile::$temporaryDirectory = null;
 
         // The package's files table, with the columns BaseFile needs (timestamps, soft deletes,
         // additional_properties) on top of the ones addFile() fills.
@@ -102,6 +111,10 @@ class RebuildFromSourceTest extends TestCase
 
         if ($this->localDirectory !== null) {
             File::deleteDirectory($this->localDirectory);
+        }
+
+        if ($this->copyDirectory !== null) {
+            File::deleteDirectory($this->copyDirectory);
         }
 
         parent::tearDown();
@@ -250,10 +263,12 @@ class RebuildFromSourceTest extends TestCase
         // have to survive; this fails if the copy moves after the deletion.
         $file = $this->upload(watermark: $this->solidWatermark());
         $thumbnails = $file->thumbnails()->get();
+        $this->useCopyDirectory();
         RebuildableFile::$removeSourceBeforeCopy = true;
 
         $this->assertFalse($this->rebuild($file, null));
         $this->assertNull(RebuildableFile::$lastTemporaryCopy, 'The copy was expected to fail.');
+        $this->assertCopyDirectoryEmpty();
 
         $file = RebuildableFile::find($file->id);
         Storage::assertExists($file->file);
@@ -299,6 +314,153 @@ class RebuildFromSourceTest extends TestCase
         $this->assertTemporaryCopyRemoved();
     }
 
+    #[Test]
+    public function a_transaction_that_cannot_be_opened_leaves_the_callers_transaction_open(): void
+    {
+        // A caller rebuilding inside a transaction of its own, which the docs advise against but
+        // which projects do, and the method's transaction cannot be opened (a lost connection, a
+        // failed savepoint). The exception has to reach the caller with its transaction untouched:
+        // caught by the method, its rollBack() would undo the caller's transaction instead.
+        $file = $this->upload(watermark: $this->solidWatermark());
+        $thumbnails = $file->thumbnails()->get();
+        $level = DB::transactionLevel();
+
+        DB::beginTransaction();
+        $failing = true;
+        DB::connection()->beforeStartingTransaction(function () use (&$failing) {
+            if ($failing) {
+                throw new RuntimeException('Thrown by the test while opening the transaction.');
+            }
+        });
+
+        try {
+            $this->rebuild($file, null);
+            $this->fail('The rebuild was expected to throw.');
+        } catch (RuntimeException $e) {
+            $this->assertSame('Thrown by the test while opening the transaction.', $e->getMessage());
+            $this->assertSame($level + 1, DB::transactionLevel(), "The caller's transaction was closed.");
+        } finally {
+            $failing = false;
+            DB::rollBack($level);
+        }
+
+        $this->assertTemporaryCopyRemoved();
+        $this->assertStoredFilesKept($file, $thumbnails);
+    }
+
+    #[Test]
+    public function a_source_read_short_returns_false_and_keeps_the_files(): void
+    {
+        // The disk hands back a stream that ends early without an error. The copy must not pass for
+        // the source: a PNG cut short fails to decode only after the old files have been deleted, and
+        // a JPEG is rebuilt with its bottom missing.
+        $file = $this->upload(watermark: $this->solidWatermark());
+        $source = $file->source()->first();
+        $thumbnails = $file->thumbnails()->get();
+        $this->useCopyDirectory();
+
+        $disk = Storage::disk('s3');
+        $contents = $disk->get($source->file);
+        $short = fopen('php://memory', 'r+');
+        fwrite($short, substr($contents, 0, intdiv(strlen($contents), 2)));
+        rewind($short);
+
+        $failing = Mockery::mock($disk);
+        $failing->shouldReceive('readStream')->once()->andReturn($short);
+        Storage::set('s3', $failing);
+
+        try {
+            $this->assertFalse($this->rebuild($file, null));
+        } finally {
+            Storage::set('s3', $disk);
+        }
+
+        $this->assertCopyDirectoryEmpty();
+        $this->assertStoredFilesKept($file, $thumbnails);
+    }
+
+    #[Test]
+    public function a_disk_error_while_reading_the_source_returns_false_and_keeps_the_files(): void
+    {
+        // A disk set to throw, as a project's S3 disk usually is, reports a failed read with an
+        // exception rather than null.
+        $file = $this->upload(watermark: $this->solidWatermark());
+        $source = $file->source()->first();
+        $thumbnails = $file->thumbnails()->get();
+        $this->useCopyDirectory();
+
+        $disk = Storage::disk('s3');
+        $failing = Mockery::mock($disk);
+        $failing->shouldReceive('readStream')->once()->andThrow(UnableToReadFile::fromLocation($source->file));
+        Storage::set('s3', $failing);
+
+        try {
+            $this->assertFalse($this->rebuild($file, null));
+        } finally {
+            Storage::set('s3', $disk);
+        }
+
+        $this->assertCopyDirectoryEmpty();
+        $this->assertStoredFilesKept($file, $thumbnails);
+    }
+
+    #[Test]
+    public function a_disk_error_while_checking_the_size_returns_false_and_keeps_the_files(): void
+    {
+        // The source is read whole, then the disk cannot report the size to check the copy against,
+        // as S3 cannot when the connection drops between the two requests.
+        $file = $this->upload(watermark: $this->solidWatermark());
+        $source = $file->source()->first();
+        $thumbnails = $file->thumbnails()->get();
+        $this->useCopyDirectory();
+
+        $disk = Storage::disk('s3');
+        $failing = Mockery::mock($disk);
+        $failing->shouldReceive('size')->once()->andThrow(UnableToRetrieveMetadata::fileSize($source->file));
+        Storage::set('s3', $failing);
+
+        try {
+            $this->assertFalse($this->rebuild($file, null));
+        } finally {
+            Storage::set('s3', $disk);
+        }
+
+        $this->assertCopyDirectoryEmpty();
+        $this->assertStoredFilesKept($file, $thumbnails);
+    }
+
+    #[Test]
+    public function a_temporary_directory_that_cannot_be_used_does_not_stop_the_rebuild(): void
+    {
+        // tempnam() then creates the copy in the system's temporary directory and raises a notice,
+        // which Laravel turns into an ErrorException; the rebuild has to go on with that copy, and
+        // say where it went.
+        $file = $this->upload(watermark: null);
+        RebuildableFile::$temporaryDirectory = sys_get_temp_dir() . DIRECTORY_SEPARATOR
+            . 'helper-rebuild-missing-' . bin2hex(random_bytes(4));
+        Log::spy();
+
+        $this->assertTrue($this->rebuild($file, null));
+
+        $this->assertTemporaryCopyRemoved();
+        Log::shouldHaveReceived('warning')
+            ->once()
+            ->with(Mockery::on(fn ($message) => str_contains($message, 'Could not use the temporary directory')));
+    }
+
+    #[Test]
+    public function the_default_temporary_directory_logs_no_warning(): void
+    {
+        // The fallback check compares the directory tempnam() used with the one asked for; with the
+        // default one they have to come out equal, or every rebuild would log a false warning.
+        $file = $this->upload(watermark: null);
+        Log::spy();
+
+        $this->assertTrue($this->rebuild($file, null));
+
+        Log::shouldNotHaveReceived('warning');
+    }
+
     /**
      * Upload a 960x1440 portrait the way a project does, and check where it landed: off the local
      * storage_path('app') lookup, unless the test runs on that local disk on purpose.
@@ -326,7 +488,7 @@ class RebuildFromSourceTest extends TestCase
     }
 
     /**
-     * Rebuild the way a project's gallery controller does.
+     * Rebuild with the arguments a project passes when a gallery's watermark is switched on or off.
      */
     private function rebuild(RebuildableFile $file, ?UploadedFile $watermark): bool
     {
@@ -369,6 +531,39 @@ class RebuildFromSourceTest extends TestCase
         $this->assertNotNull($copy, 'The rebuild did not copy the source.');
         $this->temporaryFiles[] = $copy;
         $this->assertFileDoesNotExist($copy);
+    }
+
+    /**
+     * Have the rebuild copy the source to a directory of the test's own, so a failed copy that
+     * stays behind shows.
+     */
+    private function useCopyDirectory(): void
+    {
+        $this->copyDirectory = sys_get_temp_dir() . DIRECTORY_SEPARATOR
+            . 'helper-rebuild-test-' . bin2hex(random_bytes(4));
+        File::makeDirectory($this->copyDirectory);
+        RebuildableFile::$temporaryDirectory = $this->copyDirectory;
+    }
+
+    private function assertCopyDirectoryEmpty(): void
+    {
+        $this->assertSame([], File::files($this->copyDirectory), 'A failed copy was left behind.');
+    }
+
+    /**
+     * The file, uploaded with a watermark, and its thumbnails, as they were before the rebuild.
+     */
+    private function assertStoredFilesKept(RebuildableFile $file, Collection $thumbnails): void
+    {
+        $file = RebuildableFile::find($file->id);
+        Storage::assertExists($file->file);
+        $this->assertMarked($file);
+        $this->assertSame([480, 720], [$file->width, $file->height]);
+
+        $this->assertSame($thumbnails->pluck('id')->all(), $file->thumbnails()->pluck('id')->all());
+        foreach ($thumbnails as $thumbnail) {
+            Storage::assertExists($thumbnail->file);
+        }
     }
 
     /**
