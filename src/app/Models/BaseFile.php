@@ -269,6 +269,9 @@ abstract class BaseFile extends Model
     /**
      * Rebuild file and its thumbnails from source file.
      *
+     * The main file comes out within images.max_width x max_height and the thumbnails at the sizes in
+     * thumbnailSizes, as addUpload() stores them.
+     *
      * @param string $location Storage location, e.g. uploads
      * @param string $relationName Relation the file belongs to, e.g. files
      * @param bool $forceWebP Convert to WebP if possible
@@ -330,20 +333,24 @@ abstract class BaseFile extends Model
                     // Delete record
                     $thumbnail->delete();
                 }
+                // The loaded relation still holds the deleted thumbnails. Unset, it is read afresh
+                // when next used: the new thumbnails, or the restored ones after a rollback.
+                $this->unsetRelation('thumbnails');
 
                 // Remove old file
                 Storage::delete($this->file);
 
-                // Process main file using the addFile method from files trait
+                // Process main file using the addFile method from files trait. Like addUpload(), it
+                // is scaled to images.max_width x max_height (null takes them from the configuration),
+                // so a source larger than that, kept at full resolution, is not served in its place.
                 $this->model->addFile(
                     file: $uploadedFile,
                     location: $location,
                     relationName: $relationName, // Using 'files' as we're updating the main file
-                    max_width: null, // No resizing for main file
+                    max_width: null,
                     max_height: null,
                     externalRelation: false, // We want to update this model
                     forceWebP: $forceWebP,
-                    preventResizing: true, // Don't resize the main file
                     options: $options,
                     watermark: $watermark,
                     watermarkOpacity: $watermarkOpacity,
@@ -353,29 +360,27 @@ abstract class BaseFile extends Model
                 // Generate thumbnails if this is an image
                 if (explode('/', $this->mime_type)[0] == 'image' && !str_contains($this->mime_type, 'svg')) {
                     $thumbnailSizes = config('filesSettings.thumbnailSizes', []);
-                    $thumbnailFiles = [];
                     // addFile() records the size of what it stored; the stored file itself may be remote.
                     $fileWidth = $this->width;
                     $fileHeight = $this->height;
 
-                    // Prepare array of files for thumbnail generation
+                    // One thumbnail for each size smaller than the main file, cut from the source at that
+                    // size, as addUpload() does. Without max_width and max_height addFile() would fall back
+                    // to the main-file limits and make every thumbnail as large as the main file.
                     foreach ($thumbnailSizes as $thumbnailSize) {
                         if ((is_null($thumbnailSize['width']) || $thumbnailSize['width'] < $fileWidth) &&
                             (is_null($thumbnailSize['height']) || $thumbnailSize['height'] < $fileHeight)) {
-                            // Add the file to the array for each valid thumbnail size
-                            $thumbnailFiles[] = $uploadedFile;
+                            $this->addFile(
+                                file: $uploadedFile,
+                                location: $location,
+                                relationName: 'thumbnails',
+                                max_width: $thumbnailSize['width'],
+                                max_height: $thumbnailSize['height'],
+                                options: $options,
+                                watermark: $watermark,
+                                watermarkOpacity: $watermarkOpacity
+                            );
                         }
-                    }
-
-                    // Use addFiles method from files trait to generate all thumbnails at once
-                    if (!empty($thumbnailFiles)) {
-                        $this->addFiles(
-                            files: $thumbnailFiles,
-                            location: $location,
-                            relationName: 'thumbnails',
-                            watermark: $watermark,
-                            watermarkOpacity: $watermarkOpacity
-                        );
                     }
                 }
 

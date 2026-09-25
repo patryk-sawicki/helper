@@ -23,10 +23,12 @@ use Mockery;
 use PatrykSawicki\Helper\Tests\Fixtures\RebuildableFile;
 use PatrykSawicki\Helper\Tests\Fixtures\RebuildOwner;
 use PatrykSawicki\Helper\Tests\TestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\RequiresFunction;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\Attributes\Test;
 use RuntimeException;
+use TypeError;
 
 /**
  * rebuildFromSource() on a disk other than the local one (AA-271).
@@ -64,6 +66,7 @@ class RebuildFromSourceTest extends TestCase
         RebuildableFile::$removeSourceBeforeCopy = false;
         RebuildableFile::$throwOnThumbnails = false;
         RebuildableFile::$temporaryDirectory = null;
+        RebuildableFile::$thumbnailOptions = [];
 
         // The package's files table, with the columns BaseFile needs (timestamps, soft deletes,
         // additional_properties) on top of the ones addFile() fills.
@@ -88,8 +91,9 @@ class RebuildFromSourceTest extends TestCase
         config(['filesSettings' => require __DIR__ . '/../../src/config/filesSettings.php']);
         // The file reads FILES_SETTINGS_BLOCK_WEBP_CONVERSION; the tests convert to WebP whatever it says.
         config(['filesSettings.block_webp_conversion' => false]);
-        // A 600 px size sits between the uploaded main file (480 wide) and the rebuilt one (960 wide),
-        // so the thumbnail count shows the rebuild decides by the new size, not the old one.
+        // A 600 px size sits between the main file of the 960x1440 upload (480 wide) and the source,
+        // so the thumbnail count shows which size the rebuild decides by (see
+        // the_rebuild_follows_the_current_image_limits).
         config(['filesSettings.thumbnailSizes' => [
             ['width' => 64, 'height' => 64],
             ['width' => 374, 'height' => null],
@@ -132,16 +136,16 @@ class RebuildFromSourceTest extends TestCase
 
         $file = RebuildableFile::find($file->id);
 
-        // Rebuilt at the source's full resolution, and converted.
+        // Rebuilt within images.max_width x max_height (1280x720), as uploaded, and converted.
         $this->assertSame('webp', $file->type);
-        $this->assertSame([960, 1440], [$file->width, $file->height]);
+        $this->assertSame([480, 720], [$file->width, $file->height]);
         $this->assertMarked($file);
 
-        // One thumbnail per configured size smaller than the rebuilt main file: 64x64, 374 and 600
-        // wide, not 1088. The upload, 480 wide, had two.
+        // One thumbnail per configured size smaller than the rebuilt main file: 64x64 and 374 wide,
+        // not 600 or 1088.
         $this->assertCount(2, $oldThumbnails);
         $thumbnails = $file->thumbnails()->get();
-        $this->assertCount(3, $thumbnails);
+        $this->assertCount(2, $thumbnails);
         foreach ($thumbnails as $thumbnail) {
             $this->assertMarked($thumbnail);
         }
@@ -176,11 +180,11 @@ class RebuildFromSourceTest extends TestCase
 
         $file = RebuildableFile::find($file->id);
         $this->assertFileExists($file->fullStoragePatch());
-        $this->assertSame([960, 1440], [$file->width, $file->height]);
+        $this->assertSame([480, 720], [$file->width, $file->height]);
         $this->assertMarked($file);
 
         $thumbnails = $file->thumbnails()->get();
-        $this->assertCount(3, $thumbnails);
+        $this->assertCount(2, $thumbnails);
         foreach ($thumbnails as $thumbnail) {
             $this->assertMarked($thumbnail);
         }
@@ -199,10 +203,175 @@ class RebuildFromSourceTest extends TestCase
         $this->assertUnmarked($file);
 
         $thumbnails = $file->thumbnails()->get();
-        $this->assertCount(3, $thumbnails);
+        $this->assertCount(2, $thumbnails);
         foreach ($thumbnails as $thumbnail) {
             $this->assertUnmarked($thumbnail);
         }
+    }
+
+    public static function orientations(): array
+    {
+        // Source size, then the size addFile() scales the main file to within 1280x720 - up to it for
+        // the small one, which is converted to WebP while prevent_upscale is off.
+        return [
+            'landscape' => [1500, 1000, 1080, 720],
+            'portrait' => [960, 1440, 480, 720],
+            'square' => [1200, 1200, 720, 720],
+            'small' => [400, 300, 960, 720],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('orientations')]
+    public function a_rebuild_reproduces_what_the_upload_stored(
+        int $width,
+        int $height,
+        int $storedWidth,
+        int $storedHeight
+    ): void {
+        // Up to 0.7.19 the rebuilt main file came out at the source's full resolution, so the original
+        // was served as the preview, and every thumbnail at the size of the uploaded main file.
+        $file = $this->upload(watermark: null, width: $width, height: $height);
+        $uploaded = $this->storedSizes($file);
+        $this->assertSame([$storedWidth, $storedHeight], $uploaded['main']);
+        $this->assertNotEmpty($uploaded['thumbnails']);
+
+        $this->assertTrue($this->rebuild($file, $this->solidWatermark()));
+
+        $rebuilt = $this->storedSizes(RebuildableFile::find($file->id));
+        $this->assertSame($uploaded, $rebuilt);
+
+        foreach ($rebuilt['thumbnails'] as [$thumbnailWidth, $thumbnailHeight]) {
+            $this->assertLessThan($storedWidth, $thumbnailWidth);
+            $this->assertLessThan($storedHeight, $thumbnailHeight);
+        }
+    }
+
+    #[Test]
+    public function the_rebuild_follows_the_current_image_limits(): void
+    {
+        // A project that raises the limits after its files were stored: the rebuild takes the limits
+        // it runs with, and the thumbnails follow the size of the rebuilt main file, not the one it
+        // replaces - 600 wide fits in the 960 wide main file, not in the uploaded one, 480 wide.
+        $file = $this->upload(watermark: null);
+        $this->assertCount(2, $file->thumbnails()->get());
+        config(['filesSettings.images.max_height' => 1440]);
+
+        $this->assertTrue($this->rebuild($file, null));
+
+        $sizes = $this->storedSizes(RebuildableFile::find($file->id));
+        $this->assertSame([960, 1440], $sizes['main']);
+        $this->assertCount(3, $sizes['thumbnails']);
+    }
+
+    #[Test]
+    public function a_small_source_keeps_its_size_when_upscaling_is_prevented(): void
+    {
+        // The other side of the small data set above: with prevent_upscale set, the upload keeps a
+        // source smaller than the limits at its size, and so must the rebuild.
+        config(['filesSettings.images.prevent_upscale' => true]);
+        $file = $this->upload(watermark: null, width: 400, height: 300);
+        $uploaded = $this->storedSizes($file);
+        $this->assertSame([400, 300], $uploaded['main']);
+        $this->assertCount(2, $uploaded['thumbnails']);
+
+        $this->assertTrue($this->rebuild($file, $this->solidWatermark()));
+
+        $this->assertSame($uploaded, $this->storedSizes(RebuildableFile::find($file->id)));
+    }
+
+    #[Test]
+    public function the_thumbnails_are_given_the_options_passed_to_the_rebuild(): void
+    {
+        // As addUpload() gives them. Up to 0.7.19 they got none, so on S3 the disk's visibility,
+        // whatever the caller passed for the main file. The fixture records what each thumbnail is
+        // given: the fake disk is a local one, and a local file's visibility does not read back on
+        // every platform.
+        $file = $this->upload(watermark: null);
+        RebuildableFile::$thumbnailOptions = [];
+
+        $this->assertTrue($file->rebuildFromSource(
+            location: 'uploads',
+            relationName: 'files',
+            options: ['visibility' => 'private']
+        ));
+
+        $this->assertSame(
+            [['visibility' => 'private'], ['visibility' => 'private']],
+            RebuildableFile::$thumbnailOptions
+        );
+    }
+
+    #[Test]
+    public function the_rebuilt_file_lists_its_new_thumbnails(): void
+    {
+        // The rebuild loads the thumbnails to delete them. Left loaded, the relation kept listing the
+        // deleted ones on the instance it was called on, so srcset() or img() called on it cached them.
+        $file = $this->upload(watermark: null);
+        $old = $file->thumbnails()->pluck('id')->all();
+
+        $this->assertTrue($this->rebuild($file, null));
+
+        $new = $file->thumbnails()->pluck('id')->all();
+        $this->assertNotEmpty($new);
+        $this->assertSame([], array_intersect($old, $new));
+        $this->assertSame($new, $file->thumbnails->pluck('id')->all());
+    }
+
+    #[Test]
+    public function a_webp_source_larger_than_the_limit_is_resized_and_marked(): void
+    {
+        // A WebP source is not converted, so up to 0.7.19, when the main file was not resized either,
+        // it was stored as an unmarked copy of the source, taking the mark off instead of putting it
+        // on. Resizing it to the limits sends it through the watermark step.
+        $file = $this->upload(watermark: null, format: 'webp');
+
+        $this->assertTrue($this->rebuild($file, $this->solidWatermark()));
+
+        $file = RebuildableFile::find($file->id);
+        $this->assertSame([480, 720], $this->storedSizes($file)['main']);
+        $this->assertMarked($file);
+
+        $thumbnails = $file->thumbnails()->get();
+        $this->assertCount(2, $thumbnails);
+        foreach ($thumbnails as $thumbnail) {
+            $this->assertMarked($thumbnail);
+        }
+    }
+
+    #[Test]
+    public function a_rebuild_without_the_conversion_of_a_source_larger_than_the_limits_throws(): void
+    {
+        // The known TypeError of 0.7.18: addFile() calls the encoder with null when it resizes
+        // without converting, which resizing the main file now reaches with forceWebP: false. This
+        // pins what CHANGELOG 0.7.20 and the docs say it leaves behind, and fails once the TypeError
+        // is fixed, so they are updated with it.
+        $file = $this->upload(watermark: null);
+        $oldMain = $file->file;
+        $oldThumbnails = $file->thumbnails()->pluck('file')->all();
+        $filesBefore = Storage::allFiles();
+        $level = DB::transactionLevel();
+
+        try {
+            $file->rebuildFromSource(location: 'uploads', relationName: 'files', forceWebP: false);
+            $this->fail('The rebuild was expected to throw a TypeError.');
+        } catch (TypeError) {
+            // Expected, with the method's transaction left open.
+            $this->assertSame($level + 1, DB::transactionLevel());
+        } finally {
+            // The method leaves its transaction open on an Error; see docs/rebuildFromSource.md.
+            DB::rollBack($level);
+        }
+
+        // The record is rolled back to the old main file. The old files are gone and nothing was
+        // written in their place, whatever path the new main file would have had.
+        $this->assertSame($oldMain, RebuildableFile::find($file->id)->file);
+        $filesAfter = Storage::allFiles();
+        $this->assertSame([], array_values(array_diff($filesAfter, $filesBefore)), 'A file was written.');
+        $this->assertEqualsCanonicalizing(
+            array_map(fn ($path) => ltrim($path, '/'), [$oldMain, ...$oldThumbnails]),
+            array_values(array_diff($filesBefore, $filesAfter))
+        );
     }
 
     #[Test]
@@ -462,15 +631,21 @@ class RebuildFromSourceTest extends TestCase
     }
 
     /**
-     * Upload a 960x1440 portrait the way a project does, and check where it landed: off the local
-     * storage_path('app') lookup, unless the test runs on that local disk on purpose.
+     * Upload an image, a 960x1440 portrait PNG unless told otherwise, the way a project does, and check
+     * where it landed: off the local storage_path('app') lookup, unless the test runs on that local
+     * disk on purpose.
      */
-    private function upload(?UploadedFile $watermark, bool $onLocalDisk = false): RebuildableFile
-    {
+    private function upload(
+        ?UploadedFile $watermark,
+        bool $onLocalDisk = false,
+        int $width = 960,
+        int $height = 1440,
+        string $format = 'png'
+    ): RebuildableFile {
         $owner = RebuildOwner::create(['name' => 'owner']);
 
         $file = $owner->addUpload(
-            uploadedFile: $this->imageFile($this->whiteImage(960, 1440), 'photo.png'),
+            uploadedFile: $this->imageFile($this->whiteImage($width, $height), 'photo.' . $format, $format),
             watermark: $watermark,
             watermarkOpacity: 100
         );
@@ -595,16 +770,44 @@ class RebuildFromSourceTest extends TestCase
         return $this->imageFile($this->manager->create(1500, 1000)->fill('ff0000'), 'watermark.png');
     }
 
-    private function imageFile(ImageInterface $image, string $name): UploadedFile
+    /**
+     * @param string $format png or webp
+     */
+    private function imageFile(ImageInterface $image, string $name, string $format = 'png'): UploadedFile
     {
-        // tempnam() creates the file it names; the PNG goes next to it, so both are removed. The
+        // tempnam() creates the file it names; the image goes next to it, so both are removed. The
         // prefix is not the one rebuildFromSource() uses, so a leftover from a test cannot pass for
         // one from a rebuild.
         $base = tempnam(sys_get_temp_dir(), 'helper-upload-');
-        $path = $base . '.png';
+        $path = $base . '.' . $format;
         array_push($this->temporaryFiles, $base, $path);
-        $image->toPng()->save($path);
+        ($format === 'webp' ? $image->toWebp(100) : $image->toPng())->save($path);
 
-        return new UploadedFile($path, $name, 'image/png', null, true);
+        return new UploadedFile($path, $name, 'image/' . $format, null, true);
+    }
+
+    /**
+     * The size of the main file and of each thumbnail, each checked against the image on the disk.
+     *
+     * @return array{main: array{int, int}, thumbnails: list<array{int, int}>}
+     */
+    private function storedSizes(RebuildableFile $file): array
+    {
+        $thumbnails = $file->thumbnails()->get()->map(fn ($thumbnail) => $this->storedSize($thumbnail))->all();
+        sort($thumbnails);
+
+        return ['main' => $this->storedSize($file), 'thumbnails' => $thumbnails];
+    }
+
+    /**
+     * @return array{int, int}
+     */
+    private function storedSize(RebuildableFile $file): array
+    {
+        $image = $this->manager->read(Storage::get($file->file));
+        $size = [$image->width(), $image->height()];
+        $this->assertSame([$file->width, $file->height], $size, "file {$file->id}: record and disk differ");
+
+        return $size;
     }
 }
