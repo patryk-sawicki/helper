@@ -3,6 +3,7 @@
 namespace PatrykSawicki\Helper\Tests\Fixtures;
 
 use Error;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use PatrykSawicki\Helper\app\Models\BaseFile;
@@ -19,6 +20,7 @@ use PatrykSawicki\Helper\app\Models\BaseFile;
  * unreadable source would; $throwOnThumbnails throws an Error once the main file has been rebuilt,
  * where the method no longer catches anything but an Exception. $temporaryDirectory, when set, is
  * where the source is copied to, so a test can check a failed copy leaves nothing behind.
+ * $thumbnailOptions records the storage options each thumbnail is given.
  */
 class RebuildableFile extends BaseFile
 {
@@ -29,6 +31,9 @@ class RebuildableFile extends BaseFile
     public static bool $throwOnThumbnails = false;
 
     public static ?string $temporaryDirectory = null;
+
+    /** @var list<array> The options each thumbnail was given, in order. */
+    public static array $thumbnailOptions = [];
 
     protected function temporaryDirectory(): string
     {
@@ -44,17 +49,41 @@ class RebuildableFile extends BaseFile
         return self::$lastTemporaryCopy = parent::copySourceToTemporaryFile($sourceFile);
     }
 
-    public function addFiles(
-        array $files,
+    public function addFile(
+        UploadedFile $file,
         string $location = 'files',
         string $relationName = 'files',
+        ?int $max_width = null,
+        ?int $max_height = null,
+        bool $externalRelation = true,
+        bool $forceWebP = true,
+        bool $preventResizing = false,
+        array $options = [],
         ?UploadedFile $watermark = null,
-        int $watermarkOpacity = 70
-    ) {
-        if (self::$throwOnThumbnails) {
-            throw new Error('Thrown by the fixture while writing the thumbnails.');
+        int $watermarkOpacity = 70,
+        ?Model $fileModel = null
+    ): Model {
+        if ($relationName === 'thumbnails') {
+            if (self::$throwOnThumbnails) {
+                throw new Error('Thrown by the fixture while writing the thumbnails.');
+            }
+
+            self::$thumbnailOptions[] = $options;
         }
 
-        return parent::addFiles($files, $location, $relationName, $watermark, $watermarkOpacity);
+        return parent::addFile(
+            $file,
+            $location,
+            $relationName,
+            $max_width,
+            $max_height,
+            $externalRelation,
+            $forceWebP,
+            $preventResizing,
+            $options,
+            $watermark,
+            $watermarkOpacity,
+            $fileModel
+        );
     }
 }
