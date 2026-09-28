@@ -1,3 +1,101 @@
+### 0.7.20
+
+**Fix (files) — `rebuildFromSource()` stores the sizes `addUpload()` does.** The main file was rebuilt
+with `preventResizing: true` and no limits, so it came out at the source's full resolution: a
+3000×2000 original replaced its 1080×720 main file, and the original was served in place of the
+preview. The thumbnails went through `addFiles()`, which passes no size, so `addFile()` fell back to
+`images.max_width`×`images.max_height` and every thumbnail came out as large as the uploaded main
+file: with thumbnail sizes 80, 400 and 800 wide, three of 1080×720 instead of 80×53, 400×267 and
+800×533. The main file is now scaled to fit within `images.max_width`×`images.max_height`, and each
+thumbnail is scaled from the source to fit its size in `thumbnailSizes`, the way `addUpload()` does
+both.
+
+What changes, for projects that call `rebuildFromSource()`:
+
+- the rebuilt main file and thumbnails get the sizes an upload of the source would get. The limits
+  are the ones configured when the rebuild runs, so a file uploaded with its own `max_width` and
+  `max_height` passed to `addUpload()` comes out at the configured ones, and after the limits have
+  been raised the rebuilt main file is larger than the one it replaces, with the thumbnails that fit
+  in it. Do not rebuild files uploaded with smaller limits than the configured ones: their main file
+  would come out larger, and one whose source fits within the configured limits would show the
+  source in full;
+- as in an upload, a source smaller than the limits is scaled up to them when it is converted to
+  WebP, unless `images.prevent_upscale` is set; the main file used to keep the source's size;
+- the main file of a source larger than the limits is always resized now, so with the conversion on
+  it is marked when a watermark is passed, also when the source is WebP, which used to come out as
+  an unmarked copy of itself (with the conversion off the method returns `false`, see below). A
+  source that fits and is WebP, or is not converted, is still stored unmarked when the rebuild goes
+  on (the known gap of 0.7.18; with the conversion blocked in the configuration it mostly returns
+  `false`, see below). The thumbnails of a WebP source are scaled down from it, so they are marked
+  too, except one for a size in `thumbnailSizes` with neither a width nor a height: it is scaled to
+  fit the main-file limits, so from a WebP source that fits them, or from any source that fits them
+  with the conversion blocked, it is stored as an unmarked copy, as the main file is;
+- the thumbnails are stored with the `options` passed to the method, as the main file is and as
+  `addUpload()` stores them; they used to get the default ones (with the default disk named `s3`,
+  the `visibility` that disk sets: `public` when its configuration has no `visibility` key, none at
+  all when the key is `null`, which leaves the files with the bucket's default ACL). A caller
+  passing `[]` sees no difference. Pass the options the file was uploaded with: `[]` stores the
+  rebuilt files with that default visibility, whatever they had before;
+- the watermark and the encoding work on the scaled image, so a call takes less memory and time
+  after the source has been decoded; the source is still decoded at its full resolution, once for
+  the main file and once for each thumbnail, as in `addUpload()`;
+- `rebuildFromSource()` no longer calls `addFiles()`. A file model that overrides `addFiles()` to
+  act on the rebuilt thumbnails has to override `addFile()` instead, which each thumbnail now goes
+  through with `relationName: 'thumbnails'`;
+- after a rebuild, the `thumbnails` relation of the file it was called on lists the new thumbnails.
+  The method loaded the relation to delete the old ones and left it loaded, so `srcset()`, `img()`
+  or `thumbnail()` called on the same instance right after listed the deleted thumbnails, and the
+  first two cached them for the cache's lifetime (`app.cache_default_ttl`, a day by default).
+
+**Breaking for callers passing `forceWebP: false`, for GIF sources, with the conversion blocked, and
+for an image whose size cannot be read (also a WebP source with the default `forceWebP`) — such a
+rebuild may now return `false`.** `addFile()` still throws the `TypeError` of 0.7.18 when it
+resizes an image without converting it to WebP, and resizing the main file and the thumbnails reaches
+it in more cases. `rebuildFromSource()` now checks for them before it deletes anything or
+opens its transaction: it logs a warning and returns `false`, with the files and records left as
+they were. That happens with `forceWebP: false` for a source larger than the limits, which 0.7.19
+rebuilt as an unmarked full-resolution copy, and with the conversion blocked in the configuration
+(`block_webp_conversion`, or the source's extension listed in `forbidden_webp_extensions`, where
+`gif` is by default) for a source larger than the limits or one that gets a thumbnail (a size in
+`thumbnailSizes` with neither a width nor a height aside), which is nearly every image; 0.7.19
+rebuilt the ones within the limits. A source within the limits with `forceWebP: false` is still
+rebuilt when the configuration does not block the conversion. The same check refuses an image whose
+size `getimagesize()` cannot read: converted, the rebuild used to fail on it only after deleting the
+old files; not converted (the conversion off, or a WebP source), it failed that way on PHP 8.5 and
+was stored as a copy of the source on earlier versions, which it no longer is. An exception thrown
+while the source is checked now makes the method return `false` too, as one thrown during the
+rebuild does. The check is a private method of `BaseFile`, so a file model cannot turn it off by
+overriding it, and one with a method of the same name is not affected. The
+`TypeError` itself, which `addFile()` and `addUpload()` still throw, will be fixed separately.
+
+**Files rebuilt before 0.7.20.** Updating does not change files already rebuilt: a file rebuilt by
+0.7.19 on any disk, or by an earlier version on a local disk rooted at `storage_path('app')`, keeps
+a main file at the source's full resolution, so the original is still served as the preview, and
+thumbnails as large as an uploaded main file, until it is rebuilt again. Such a file has a main file
+wider or taller than the limits it was rebuilt under, or, when its source fitted within them, a
+thumbnail as wide as its main file or wider (a size in `thumbnailSizes` with neither a width nor a
+height aside). Rebuild such files with 0.7.20, passing the options and the watermark they were
+uploaded with; those it returns `false` for (see above) stay as they are. This includes files
+uploaded with smaller limits than the configured ones: kept out of a first rebuild (see above), once
+0.7.19 has rebuilt them a rebuild with 0.7.20 can only bring a source larger than the configured
+limits down to them.
+`regenerateThumbnails()` does not clean them up: it soft-deletes thumbnails of sizes no longer
+configured without deleting their files.
+
+**Still to check before calling it.** The other limits listed in 0.7.18 and 0.7.19 stay: the old
+files are deleted before the new ones are written, so an `Exception` midway makes the method return
+`false` with them gone (the source is kept, and a later successful rebuild brings them back); the
+file needs an owner through its `model` morph, and the owner has to drop the key that
+`addFile(externalRelation: false)` writes onto it; do not call it inside a transaction of your own;
+decoding a large source still needs memory for the whole image at its full resolution, once for the
+main file and once for each thumbnail; the 0.7.18 figure for a large portrait, which includes the
+watermark at that resolution, is an upper bound.
+
+**Not changed.** The signatures of `rebuildFromSource()`, `addFile()`, `addFiles()` and
+`addUpload()`, and `addFile()` itself, its `TypeError` included. `regenerateThumbnails()`,
+`rebuildFiles()` and the `files:rebuild` command are untouched and still read from
+`storage_path('app')`.
+
 ### 0.7.19
 
 **Fix (files) — `rebuildFromSource()` works on S3 and any other disk.** The source was looked up
