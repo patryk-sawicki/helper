@@ -344,19 +344,20 @@ class RebuildFromSourceTest extends TestCase
     public static function resizingWithoutTheConversion(): array
     {
         // Source format and size, forceWebP, the configuration for the upload and for the rebuild, then
-        // the reason the warning gives: a source larger than the limits with the conversion blocked is
-        // refused on its main file, before its thumbnails, which would be refused too. The upload
-        // converts to WebP, so it goes through: a GIF is let through by an empty
+        // the reason the warning gives: a source larger than the limits, also in one dimension only, is
+        // refused on its main file, with the conversion blocked before its thumbnails, which would be
+        // refused too. The upload converts to WebP, so it goes through: a GIF is let through by an empty
         // forbidden_webp_extensions, as addUpload() itself hits the TypeError on its first thumbnail.
         $blocked = ['filesSettings.block_webp_conversion' => true];
         $mainFile = 'its source is larger than images.max_width x images.max_height and would be resized '
             . 'without the conversion to WebP ';
+        $notForced = $mainFile . '(forceWebP is false)';
         $thumbnails = 'its thumbnails would be resized without the conversion to WebP ';
 
         return [
-            'forceWebP off, larger than the limits' => [
-                'jpg', 3000, 2000, false, [], [], $mainFile . '(forceWebP is false)',
-            ],
+            'forceWebP off, larger than the limits' => ['jpg', 3000, 2000, false, [], [], $notForced],
+            'forceWebP off, taller than the limits only' => ['jpg', 960, 1440, false, [], [], $notForced],
+            'forceWebP off, wider than the limits only' => ['jpg', 2000, 600, false, [], [], $notForced],
             'conversion blocked, larger than the limits' => [
                 'jpg', 3000, 2000, true, [], $blocked, $mainFile . '(block_webp_conversion is set)',
             ],
@@ -450,6 +451,7 @@ class RebuildFromSourceTest extends TestCase
         // the only size has neither a width nor a height and is stored as a copy of the source.
         return [
             'forceWebP off, within the limits' => ['jpg', 600, 400, false, [], [600, 400], 2],
+            'forceWebP off, exactly the limits' => ['jpg', 1280, 720, false, [], [1280, 720], 4],
             'conversion blocked, smaller than every thumbnail' => [
                 'jpg',
                 70,
@@ -501,6 +503,62 @@ class RebuildFromSourceTest extends TestCase
         $sizes = $this->storedSizes(RebuildableFile::find($file->id));
         $this->assertSame($storedSize, $sizes['main']);
         $this->assertCount($thumbnailCount, $sizes['thumbnails']);
+    }
+
+    public static function notImages(): array
+    {
+        // File name, contents, then the MIME type fileinfo gives it, which the check decides by.
+        return [
+            'PDF' => [
+                'document.pdf',
+                "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n",
+                'application/pdf',
+            ],
+            'SVG' => [
+                'drawing.svg',
+                '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>',
+                'image/svg+xml',
+            ],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('notImages')]
+    public function a_rebuild_of_a_file_that_is_not_an_image_goes_on(
+        string $name,
+        string $contents,
+        string $mimeType
+    ): void {
+        // The check reads the size only of an image addFile() may resize; a file that is not one, or
+        // an SVG, has none it can read, and is stored as it is. addUpload() keeps no source for such a
+        // file, so the test adds one the way it does for an image. Its type is checked first, as the
+        // check decides by it.
+        $path = tempnam(sys_get_temp_dir(), 'helper-upload-');
+        $this->temporaryFiles[] = $path;
+        file_put_contents($path, $contents);
+        $upload = new UploadedFile($path, $name, null, null, true);
+
+        $file = RebuildOwner::create(['name' => 'owner'])->addUpload(uploadedFile: $upload);
+        $file->addFile(
+            file: $upload,
+            location: 'uploads',
+            relationName: 'source',
+            forceWebP: false,
+            preventResizing: true
+        );
+        $source = $file->source()->first();
+        $this->assertSame($mimeType, $source->mime_type);
+        Storage::assertExists($source->file);
+        $this->assertFileDoesNotExist($source->fullStoragePatch());
+        $level = DB::transactionLevel();
+
+        $file = RebuildableFile::find($file->id);
+        $this->assertTrue($file->rebuildFromSource(location: 'uploads', relationName: 'files'));
+
+        $this->assertSame($level, DB::transactionLevel());
+        $file = RebuildableFile::find($file->id);
+        $this->assertSame($contents, Storage::get($file->file));
+        $this->assertCount(0, $file->thumbnails()->get());
     }
 
     #[Test]

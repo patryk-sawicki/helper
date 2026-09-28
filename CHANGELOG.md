@@ -47,10 +47,11 @@ What changes, for projects that call `rebuildFromSource()`:
   or `thumbnail()` called on the same instance right after listed the deleted thumbnails, and the
   first two cached them for the cache's lifetime (`app.cache_default_ttl`, a day by default).
 
-**Breaking for callers passing `forceWebP: false`, for GIF sources, and with the conversion blocked
-— such a rebuild may now return `false`.** `addFile()` still throws the `TypeError` of 0.7.18 when
-it resizes an image without converting it to WebP, and resizing the main file and the thumbnails
-reaches it in more cases. `rebuildFromSource()` now checks for them before it deletes anything or
+**Breaking for callers passing `forceWebP: false`, for GIF sources, with the conversion blocked, and
+for an image whose size cannot be read (also a WebP source with the default `forceWebP`) — such a
+rebuild may now return `false`.** `addFile()` still throws the `TypeError` of 0.7.18 when it
+resizes an image without converting it to WebP, and resizing the main file and the thumbnails reaches
+it in more cases. `rebuildFromSource()` now checks for them before it deletes anything or
 opens its transaction: it logs a warning and returns `false`, with the files and records left as
 they were. That happens with `forceWebP: false` for a source larger than the limits, which 0.7.19
 rebuilt as an unmarked full-resolution copy, and with the conversion blocked in the configuration
@@ -59,10 +60,12 @@ rebuilt as an unmarked full-resolution copy, and with the conversion blocked in 
 `thumbnailSizes` with neither a width nor a height aside), which is nearly every image; 0.7.19
 rebuilt the ones within the limits. A source within the limits with `forceWebP: false` is still
 rebuilt when the configuration does not block the conversion. The same check refuses an image whose
-size `getimagesize()` cannot read, which the rebuild used to fail on only after deleting the old
-files, and an exception thrown while the source is checked now makes the method return `false` too,
-as one thrown during the rebuild does. The check is a private method of `BaseFile`, so a file model
-cannot turn it off by overriding it, and one with a method of the same name is not affected. The
+size `getimagesize()` cannot read: converted, the rebuild used to fail on it only after deleting the
+old files; not converted (the conversion off, or a WebP source), it failed that way on PHP 8.5 and
+was stored as a copy of the source on earlier versions, which it no longer is. An exception thrown
+while the source is checked now makes the method return `false` too, as one thrown during the
+rebuild does. The check is a private method of `BaseFile`, so a file model cannot turn it off by
+overriding it, and one with a method of the same name is not affected. The
 `TypeError` itself, which `addFile()` and `addUpload()` still throw, will be fixed separately.
 
 **Files rebuilt before 0.7.20.** Updating does not change files already rebuilt: a file rebuilt by

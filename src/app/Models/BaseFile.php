@@ -423,6 +423,8 @@ abstract class BaseFile extends Model
     /**
      * Check that addFile() can store what the rebuild makes from the source.
      *
+     * A file that is not an image, or an SVG, is stored as it is, so it passes without being read.
+     *
      * addFile() calls the encoder with null when it resizes an image without converting it to WebP,
      * and intervention/image 3 throws a TypeError for that (the known problem of 0.7.18). The
      * conversion is off for the main file with forceWebP: false, and for the main file and the
@@ -433,9 +435,11 @@ abstract class BaseFile extends Model
      * refuses rebuilds that would work.
      *
      * An image whose size cannot be read is refused too, and that part stays after the fix: addFile()
-     * reads the size the same way, and the rebuild would otherwise fail on it only after the old files
-     * have been deleted. The image itself is not decoded here, so one that GD cannot decode still fails
-     * in addFile().
+     * reads the size the same way. Converted, such an image failed only after the old files had been
+     * deleted; not converted (the conversion off, or a WebP source), it failed that way on PHP 8.5,
+     * where reading the size throws, and on earlier versions it was stored as a copy of the source,
+     * which it no longer is. The image itself is not decoded here, so one that GD cannot decode still
+     * fails in addFile().
      */
     private function sourceCanBeResized(UploadedFile $source, bool $forceWebP): bool
     {

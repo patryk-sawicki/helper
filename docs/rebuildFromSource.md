@@ -159,10 +159,11 @@ anything or opened a transaction (since 0.7.20; 0.7.19 rebuilt the others, and t
 the old files, only for a source larger than the limits with the conversion blocked). A source within the limits with
 `forceWebP: false` is still rebuilt when the configuration does not block the conversion: the main file is stored as
 it is, and the thumbnails are converted. An image whose size `getimagesize()` cannot read, which is how `addFile()`
-reads it too, is refused as well, and so is an `Exception` thrown during these checks: it is logged, and the method
-returns `false`. The image itself is not decoded then, so one that `getimagesize()` reads but GD cannot decode, such
-as a TIFF, still fails in `addFile()` after the old files have been deleted, and the method returns `false` with them
-gone (see Notes).
+reads it too, is refused as well (since 0.7.20; when it was not converted, with the conversion off or as a WebP
+source, 0.7.19 stored it as a copy of the source on PHP before 8.5), and so is an `Exception` thrown during these
+checks: it is logged, and the method returns `false`. The image itself is not decoded then, so one that
+`getimagesize()` reads but GD cannot decode, such as a TIFF, still fails in `addFile()` after the old files have been
+deleted, and the method returns `false` with them gone (see Notes).
 
 Do not call the method inside a transaction of your own, such as one around a loop over a gallery. The method's own
 commit then commits nothing (the outer transaction decides), and the old files of each rebuilt file are deleted at
