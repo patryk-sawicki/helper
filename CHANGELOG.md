@@ -7,7 +7,8 @@ preview. The thumbnails went through `addFiles()`, which passes no size, so `add
 `images.max_width`×`images.max_height` and every thumbnail came out as large as the uploaded main
 file: with thumbnail sizes 80, 400 and 800 wide, three of 1080×720 instead of 80×53, 400×267 and
 800×533. The main file is now scaled to fit within `images.max_width`×`images.max_height`, and each
-thumbnail is cut from the source at its size in `thumbnailSizes`, the way `addUpload()` does both.
+thumbnail is scaled from the source to fit its size in `thumbnailSizes`, the way `addUpload()` does
+both.
 
 What changes, for projects that call `rebuildFromSource()`:
 
@@ -22,16 +23,19 @@ What changes, for projects that call `rebuildFromSource()`:
   WebP, unless `images.prevent_upscale` is set; the main file used to keep the source's size;
 - the main file of a source larger than the limits is always resized now, so with the conversion on
   it is marked when a watermark is passed, also when the source is WebP, which used to come out as
-  an unmarked copy of itself (with the conversion off it throws, see below). A source that fits and
-  is WebP, or is not converted, is still stored unmarked (the known gap of 0.7.18). The thumbnails
-  of a WebP source are scaled down from it, so they are marked too, except one for a size in
-  `thumbnailSizes` with neither a width nor a height: it is cut at the main-file limits, so from a
-  WebP source that fits them it is stored as a copy, as the main file is;
+  an unmarked copy of itself (with the conversion off the method returns `false`, see below). A
+  source that fits and is WebP, or is not converted, is still stored unmarked when the rebuild goes
+  on (the known gap of 0.7.18; with the conversion blocked in the configuration it mostly returns
+  `false`, see below). The thumbnails of a WebP source are scaled down from it, so they are marked
+  too, except one for a size in `thumbnailSizes` with neither a width nor a height: it is scaled to
+  fit the main-file limits, so from a WebP source that fits them, or from any source that fits them
+  with the conversion blocked, it is stored as an unmarked copy, as the main file is;
 - the thumbnails are stored with the `options` passed to the method, as the main file is and as
   `addUpload()` stores them; they used to get the default ones (with the default disk named `s3`,
-  that disk's `visibility`, or `public` when it sets none). A caller passing `[]` sees no
-  difference. Pass the options the file was uploaded with: `[]` stores the rebuilt files with that
-  default visibility, whatever they had before;
+  the `visibility` that disk sets: `public` when its configuration has no `visibility` key, none at
+  all when the key is `null`, which leaves the files with the bucket's default ACL). A caller
+  passing `[]` sees no difference. Pass the options the file was uploaded with: `[]` stores the
+  rebuilt files with that default visibility, whatever they had before;
 - the watermark and the encoding work on the scaled image, so a call takes less memory and time
   after the source has been decoded; the source is still decoded at its full resolution, once for
   the main file and once for each thumbnail, as in `addUpload()`;
@@ -44,15 +48,22 @@ What changes, for projects that call `rebuildFromSource()`:
   first two cached them for the cache's lifetime (`app.cache_default_ttl`, a day by default).
 
 **Breaking for callers passing `forceWebP: false`, for GIF sources, and with the conversion blocked
-— the `TypeError` of 0.7.18 moves and widens.** With the conversion off, resizing an image throws it, as the encoder is called
-with `null`. With `forceWebP: false` it now hits the main file of any source larger than the limits,
-before the main file is written, where the call used to return `true` with an unmarked
-full-resolution copy. With the conversion blocked in the configuration (`block_webp_conversion`, or
-the source's extension listed in `forbidden_webp_extensions`, where `gif` is by default) it hits
-nearly every image, on the main file or on the first thumbnail, as it does in `addUpload()`; a
-source that fitted within the limits used to be rebuilt without it. Either way the old files are
-already deleted and the transaction is left open (see `docs/rebuildFromSource.md`). Do not call the
-method for such files; the `TypeError` itself will be fixed separately.
+— such a rebuild may now return `false`.** `addFile()` still throws the `TypeError` of 0.7.18 when
+it resizes an image without converting it to WebP, and resizing the main file and the thumbnails
+reaches it in more cases. `rebuildFromSource()` now checks for them before it deletes anything or
+opens its transaction: it logs a warning and returns `false`, with the files and records left as
+they were. That happens with `forceWebP: false` for a source larger than the limits, which 0.7.19
+rebuilt as an unmarked full-resolution copy, and with the conversion blocked in the configuration
+(`block_webp_conversion`, or the source's extension listed in `forbidden_webp_extensions`, where
+`gif` is by default) for a source larger than the limits or one that gets a thumbnail (a size in
+`thumbnailSizes` with neither a width nor a height aside), which is nearly every image; 0.7.19
+rebuilt the ones within the limits. A source within the limits with `forceWebP: false` is still
+rebuilt when the configuration does not block the conversion. The same check refuses an image whose
+size `getimagesize()` cannot read, which the rebuild used to fail on only after deleting the old
+files, and an exception thrown while the source is checked now makes the method return `false` too,
+as one thrown during the rebuild does. The check is a private method of `BaseFile`, so a file model
+cannot turn it off by overriding it, and one with a method of the same name is not affected. The
+`TypeError` itself, which `addFile()` and `addUpload()` still throw, will be fixed separately.
 
 **Files rebuilt before 0.7.20.** Updating does not change files already rebuilt: a file rebuilt by
 0.7.19 on any disk, or by an earlier version on a local disk rooted at `storage_path('app')`, keeps
@@ -61,9 +72,10 @@ thumbnails as large as an uploaded main file, until it is rebuilt again. Such a 
 wider or taller than the limits it was rebuilt under, or, when its source fitted within them, a
 thumbnail as wide as its main file or wider (a size in `thumbnailSizes` with neither a width nor a
 height aside). Rebuild such files with 0.7.20, passing the options and the watermark they were
-uploaded with, except those the `TypeError` hits. This includes files uploaded with smaller limits
-than the configured ones: kept out of a first rebuild (see above), once 0.7.19 has rebuilt them a
-rebuild with 0.7.20 can only bring a source larger than the configured limits down to them.
+uploaded with; those it returns `false` for (see above) stay as they are. This includes files
+uploaded with smaller limits than the configured ones: kept out of a first rebuild (see above), once
+0.7.19 has rebuilt them a rebuild with 0.7.20 can only bring a source larger than the configured
+limits down to them.
 `regenerateThumbnails()` does not clean them up: it soft-deletes thumbnails of sizes no longer
 configured without deleting their files.
 
@@ -77,22 +89,9 @@ main file and once for each thumbnail; the 0.7.18 figure for a large portrait, w
 watermark at that resolution, is an upper bound.
 
 **Not changed.** The signatures of `rebuildFromSource()`, `addFile()`, `addFiles()` and
-`addUpload()`. `regenerateThumbnails()`, `rebuildFiles()` and the `files:rebuild` command are
-untouched and still read from `storage_path('app')`.
-
-**Tests.** `RebuildFromSourceTest` checks that a rebuild stores the same sizes as the upload it
-replaces, the main file and each thumbnail, for a landscape, a portrait and a square source larger
-than the limits and for a small one scaled up to them, each size checked against the image stored
-on the disk, and for a small one kept at its size while `images.prevent_upscale` is set; that a
-rebuild takes the limits configured when it runs and decides the thumbnails by the rebuilt main
-file; that a WebP source larger than the limits is resized and marked; that the file it was called
-on lists its new thumbnails; that a rebuild with `forceWebP: false` of a source larger than the
-limits throws the `TypeError`, with the old files deleted and no main file written (this one fails
-once the `TypeError` is fixed, so the docs are updated with it); and that the thumbnails are given
-the `options` passed to the rebuild. That last one checks what the test fixture passes to
-`addFile()`, not the visibility stored: the fake disk is a local one, and on Windows a local file
-reads back as public whatever it was stored as. The existing tests now expect the main file within
-the limits (480×720 for their 960×1440 source) and two thumbnails.
+`addUpload()`, and `addFile()` itself, its `TypeError` included. `regenerateThumbnails()`,
+`rebuildFiles()` and the `files:rebuild` command are untouched and still read from
+`storage_path('app')`.
 
 ### 0.7.19
 

@@ -269,8 +269,8 @@ abstract class BaseFile extends Model
     /**
      * Rebuild file and its thumbnails from source file.
      *
-     * The main file comes out within images.max_width x max_height and the thumbnails at the sizes in
-     * thumbnailSizes, as addUpload() stores them.
+     * The main file comes out within images.max_width x max_height and the thumbnails scaled to fit the
+     * sizes in thumbnailSizes, as addUpload() stores them.
      *
      * @param string $location Storage location, e.g. uploads
      * @param string $relationName Relation the file belongs to, e.g. files
@@ -280,7 +280,8 @@ abstract class BaseFile extends Model
      * @param int $watermarkOpacity Watermark opacity (0-100)
      * @return bool Success status
      * @throws Exception When the transaction cannot be opened; nothing has been changed yet
-     * @throws \Error Not caught, e.g. the TypeError in docs/rebuildFromSource.md; its transaction stays open
+     * @throws \Error Not caught, e.g. for a file without an owner (see docs/rebuildFromSource.md); one
+     *                thrown during the rebuild leaves its transaction open
      */
     public function rebuildFromSource(
         string $location = 'uploads',
@@ -311,11 +312,8 @@ abstract class BaseFile extends Model
         }
 
         try {
-            // Begin transaction to ensure data consistency. It is opened outside the try below, so
-            // an exception from opening it propagates and the rollBack() there cannot undo a
-            // transaction of the caller's instead.
-            DB::beginTransaction();
-
+            // Nothing has been changed yet, so an exception here ends the rebuild with false, as one
+            // thrown during it does, instead of reaching the caller.
             try {
                 // Create UploadedFile instance from source file
                 $uploadedFile = new UploadedFile(
@@ -326,6 +324,26 @@ abstract class BaseFile extends Model
                     true
                 );
 
+                // addFile() cannot resize an image without converting it to WebP: it throws the
+                // TypeError of 0.7.18, after the old files would have been deleted here. Such a
+                // rebuild stops before anything is deleted and before the transaction is opened.
+                if (!$this->sourceCanBeResized($uploadedFile, $forceWebP)) {
+                    return false;
+                }
+            } catch (Exception $e) {
+                Log::error(
+                    'Not rebuilding file ID ' . $this->id . ', checking its source failed: ' . $e->getMessage(),
+                    ['exception' => $e, 'file_id' => $this->id]
+                );
+                return false;
+            }
+
+            // Begin transaction to ensure data consistency. It is opened outside the try below, so
+            // an exception from opening it propagates and the rollBack() there cannot undo a
+            // transaction of the caller's instead.
+            DB::beginTransaction();
+
+            try {
                 // Delete all thumbnails
                 foreach ($this->thumbnails as $thumbnail) {
                     // Delete file from storage
@@ -346,7 +364,7 @@ abstract class BaseFile extends Model
                 $this->model->addFile(
                     file: $uploadedFile,
                     location: $location,
-                    relationName: $relationName, // Using 'files' as we're updating the main file
+                    relationName: $relationName, // The owner's relation the main file belongs to
                     max_width: null,
                     max_height: null,
                     externalRelation: false, // We want to update this model
@@ -364,12 +382,11 @@ abstract class BaseFile extends Model
                     $fileWidth = $this->width;
                     $fileHeight = $this->height;
 
-                    // One thumbnail for each size smaller than the main file, cut from the source at that
-                    // size, as addUpload() does. Without max_width and max_height addFile() would fall back
-                    // to the main-file limits and make every thumbnail as large as the main file.
+                    // One thumbnail for each size smaller than the main file, scaled from the source to fit
+                    // that size, as addUpload() does. Without max_width and max_height addFile() would fall
+                    // back to the main-file limits and make every thumbnail as large as the main file.
                     foreach ($thumbnailSizes as $thumbnailSize) {
-                        if ((is_null($thumbnailSize['width']) || $thumbnailSize['width'] < $fileWidth) &&
-                            (is_null($thumbnailSize['height']) || $thumbnailSize['height'] < $fileHeight)) {
+                        if ($this->isThumbnailSizeSmaller($thumbnailSize, $fileWidth, $fileHeight)) {
                             $this->addFile(
                                 file: $uploadedFile,
                                 location: $location,
@@ -391,13 +408,113 @@ abstract class BaseFile extends Model
                 return true;
             } catch (Exception $e) {
                 DB::rollBack();
-                Log::error('Error rebuilding file from source: ' . $e->getMessage(), ['exception' => $e]);
+                Log::error(
+                    'Error rebuilding file from source: ' . $e->getMessage(),
+                    ['exception' => $e, 'file_id' => $this->id]
+                );
                 return false;
             }
         } finally {
             // Also runs when an Error, which is not caught above, propagates to the caller.
             @unlink($sourceFilePath);
         }
+    }
+
+    /**
+     * Check that addFile() can store what the rebuild makes from the source.
+     *
+     * addFile() calls the encoder with null when it resizes an image without converting it to WebP,
+     * and intervention/image 3 throws a TypeError for that (the known problem of 0.7.18). The
+     * conversion is off for the main file with forceWebP: false, and for the main file and the
+     * thumbnails when block_webp_conversion is set or the source's extension is listed in
+     * forbidden_webp_extensions. The conditions are the ones addFile() and the thumbnail loop in
+     * rebuildFromSource() decide by, so the part of this check about the conversion goes together
+     * with the fix of that TypeError in addFile(): once addFile() can store such an image, it only
+     * refuses rebuilds that would work.
+     *
+     * An image whose size cannot be read is refused too, and that part stays after the fix: addFile()
+     * reads the size the same way, and the rebuild would otherwise fail on it only after the old files
+     * have been deleted. The image itself is not decoded here, so one that GD cannot decode still fails
+     * in addFile().
+     */
+    private function sourceCanBeResized(UploadedFile $source, bool $forceWebP): bool
+    {
+        $mimeType = (string)$source->getMimeType();
+        if (explode('/', $mimeType)[0] != 'image' || str_contains($mimeType, 'svg')) {
+            return true;
+        }
+
+        $extension = explode('.', $source->getClientOriginalName());
+        $extension = strtolower($extension[count($extension) - 1]);
+
+        $size = @getimagesize($source->getRealPath());
+        if ($size === false) {
+            Log::warning(
+                'Not rebuilding file ID ' . $this->id . ': the size of its source cannot be read',
+                ['file_id' => $this->id, 'mime_type' => $mimeType, 'extension' => $extension]
+            );
+            return false;
+        }
+        [$width, $height] = $size;
+
+        $blockedBy = match (true) {
+            (bool)config('filesSettings.block_webp_conversion') => 'block_webp_conversion is set',
+            in_array($extension, config('filesSettings.forbidden_webp_extensions', [])) =>
+                'the extension is listed in forbidden_webp_extensions',
+            default => null,
+        };
+
+        $maxWidth = config('filesSettings.images.max_width', 1280);
+        $maxHeight = config('filesSettings.images.max_height', 720);
+        $context = [
+            'file_id' => $this->id,
+            'width' => $width,
+            'height' => $height,
+            'extension' => $extension,
+            'max_width' => $maxWidth,
+            'max_height' => $maxHeight,
+        ];
+
+        if (($width > $maxWidth || $height > $maxHeight) && ($blockedBy !== null || !$forceWebP)) {
+            Log::warning(
+                'Not rebuilding file ID ' . $this->id . ': its source is larger than images.max_width x '
+                . 'images.max_height and would be resized without the conversion to WebP ('
+                . ($blockedBy ?? 'forceWebP is false') . '), which addFile() cannot store',
+                $context
+            );
+            return false;
+        }
+
+        // The thumbnails are converted unless the configuration blocks it. When it does, the main file
+        // fits the limits here, so it is stored as it is, at the source's size, and every thumbnail
+        // smaller than it is resized. One with neither a width nor a height is resized to the limits,
+        // which the source fits, so it is stored as a copy.
+        if ($blockedBy === null) {
+            return true;
+        }
+
+        foreach (config('filesSettings.thumbnailSizes', []) as $thumbnailSize) {
+            if ((!is_null($thumbnailSize['width']) || !is_null($thumbnailSize['height']))
+                && $this->isThumbnailSizeSmaller($thumbnailSize, $width, $height)) {
+                Log::warning(
+                    'Not rebuilding file ID ' . $this->id . ': its thumbnails would be resized without the '
+                    . 'conversion to WebP (' . $blockedBy . '), which addFile() cannot store',
+                    $context
+                );
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Whether a size in thumbnailSizes gets a thumbnail next to a main file of the given size.
+     */
+    private function isThumbnailSizeSmaller(array $thumbnailSize, ?int $width, ?int $height): bool
+    {
+        return (is_null($thumbnailSize['width']) || $thumbnailSize['width'] < $width) &&
+            (is_null($thumbnailSize['height']) || $thumbnailSize['height'] < $height);
     }
 
     /**

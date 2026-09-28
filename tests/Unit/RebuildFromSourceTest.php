@@ -28,7 +28,6 @@ use PHPUnit\Framework\Attributes\RequiresFunction;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\Attributes\Test;
 use RuntimeException;
-use TypeError;
 
 /**
  * rebuildFromSource() on a disk other than the local one (AA-271).
@@ -39,11 +38,14 @@ use TypeError;
  * can pass through a local lookup.
  *
  * The requirements are attributes for the reason given in WatermarkCoverageTest. imagewebp is needed
- * because addFile() converts the main file and the thumbnails to WebP.
+ * because addFile() converts the main file and the thumbnails to WebP, imagejpeg and imagegif for the
+ * JPEG and GIF sources of the tests of the check that refuses a rebuild without the conversion.
  */
 #[RequiresPhpExtension('gd')]
 #[RequiresPhpExtension('pdo_sqlite')]
 #[RequiresFunction('imagewebp')]
+#[RequiresFunction('imagejpeg')]
+#[RequiresFunction('imagegif')]
 class RebuildFromSourceTest extends TestCase
 {
     private ImageManager $manager;
@@ -339,39 +341,166 @@ class RebuildFromSourceTest extends TestCase
         }
     }
 
-    #[Test]
-    public function a_rebuild_without_the_conversion_of_a_source_larger_than_the_limits_throws(): void
+    public static function resizingWithoutTheConversion(): array
     {
-        // The known TypeError of 0.7.18: addFile() calls the encoder with null when it resizes
-        // without converting, which resizing the main file now reaches with forceWebP: false. This
-        // pins what CHANGELOG 0.7.20 and the docs say it leaves behind, and fails once the TypeError
-        // is fixed, so they are updated with it.
+        // Source format and size, forceWebP, the configuration for the upload and for the rebuild, then
+        // the reason the warning gives: a source larger than the limits with the conversion blocked is
+        // refused on its main file, before its thumbnails, which would be refused too. The upload
+        // converts to WebP, so it goes through: a GIF is let through by an empty
+        // forbidden_webp_extensions, as addUpload() itself hits the TypeError on its first thumbnail.
+        $blocked = ['filesSettings.block_webp_conversion' => true];
+        $mainFile = 'its source is larger than images.max_width x images.max_height and would be resized '
+            . 'without the conversion to WebP ';
+        $thumbnails = 'its thumbnails would be resized without the conversion to WebP ';
+
+        return [
+            'forceWebP off, larger than the limits' => [
+                'jpg', 3000, 2000, false, [], [], $mainFile . '(forceWebP is false)',
+            ],
+            'conversion blocked, larger than the limits' => [
+                'jpg', 3000, 2000, true, [], $blocked, $mainFile . '(block_webp_conversion is set)',
+            ],
+            'conversion blocked, within the limits' => [
+                'jpg', 600, 400, true, [], $blocked, $thumbnails . '(block_webp_conversion is set)',
+            ],
+            'GIF within the limits' => [
+                'gif',
+                600,
+                400,
+                true,
+                ['filesSettings.forbidden_webp_extensions' => []],
+                ['filesSettings.forbidden_webp_extensions' => ['gif']],
+                $thumbnails . '(the extension is listed in forbidden_webp_extensions)',
+            ],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('resizingWithoutTheConversion')]
+    public function a_rebuild_that_would_resize_without_the_conversion_changes_nothing(
+        string $format,
+        int $width,
+        int $height,
+        bool $forceWebP,
+        array $uploadConfig,
+        array $rebuildConfig,
+        string $reason
+    ): void {
+        // addFile() throws a TypeError when it resizes an image without converting it to WebP (the known
+        // problem of 0.7.18), and resizing the main file and the thumbnails to their limits reaches it
+        // here: on the main file larger than the limits, and with the conversion blocked on the first
+        // thumbnail. The rebuild has to see it coming and return false before it deletes anything or
+        // opens a transaction, where the TypeError used to leave the files deleted and the transaction
+        // open.
+        config($uploadConfig);
+        $file = $this->upload(watermark: null, width: $width, height: $height, format: $format);
+        config($rebuildConfig);
+
+        $this->assertRefusedWithoutChanges(
+            $file,
+            $forceWebP,
+            'warning',
+            'Not rebuilding file ID ' . $file->id . ': ' . $reason
+        );
+    }
+
+    #[Test]
+    public function a_source_whose_size_cannot_be_read_changes_nothing(): void
+    {
+        // A source the disk hands back whole and fileinfo recognises as a PNG, cut off in its header,
+        // before the size getimagesize() reads. addFile() reads the size the same way, and the
+        // rebuild used to fail on such a source only after the old files had been deleted.
         $file = $this->upload(watermark: null);
-        $oldMain = $file->file;
-        $oldThumbnails = $file->thumbnails()->pluck('file')->all();
-        $filesBefore = Storage::allFiles();
+        Storage::put($file->source()->first()->file, "\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0");
+
+        $this->assertRefusedWithoutChanges(
+            $file,
+            true,
+            'warning',
+            'Not rebuilding file ID ' . $file->id . ': the size of its source cannot be read'
+        );
+    }
+
+    #[Test]
+    public function an_exception_before_the_transaction_returns_false_and_changes_nothing(): void
+    {
+        // A size in thumbnailSizes without its width key, read while the rebuild is checked. The
+        // exception ends the rebuild with false, as one thrown during it does, and nothing has been
+        // changed or opened by then.
+        $file = $this->upload(watermark: null, width: 600, height: 400);
+        config([
+            'filesSettings.block_webp_conversion' => true,
+            'filesSettings.thumbnailSizes' => [['height' => 64]],
+        ]);
+
+        $this->assertRefusedWithoutChanges(
+            $file,
+            true,
+            'error',
+            'Not rebuilding file ID ' . $file->id . ', checking its source failed'
+        );
+    }
+
+    public static function storedWithoutTheConversion(): array
+    {
+        // Source format and size, forceWebP, the configuration for the rebuild, then the size of the
+        // rebuilt main file and the number of thumbnails. Nothing has to be resized without the
+        // conversion here, so the rebuild goes on: the main file fits the limits and is stored as it is,
+        // and its thumbnails are converted, or, with the conversion blocked, none is smaller than it, or
+        // the only size has neither a width nor a height and is stored as a copy of the source.
+        return [
+            'forceWebP off, within the limits' => ['jpg', 600, 400, false, [], [600, 400], 2],
+            'conversion blocked, smaller than every thumbnail' => [
+                'jpg',
+                70,
+                50,
+                true,
+                ['filesSettings.block_webp_conversion' => true],
+                [70, 50],
+                0,
+            ],
+            'conversion blocked, a size with neither a width nor a height' => [
+                'jpg',
+                600,
+                400,
+                true,
+                [
+                    'filesSettings.block_webp_conversion' => true,
+                    'filesSettings.thumbnailSizes' => [['width' => null, 'height' => null]],
+                ],
+                [600, 400],
+                1,
+            ],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('storedWithoutTheConversion')]
+    public function a_rebuild_that_resizes_nothing_without_the_conversion_goes_on(
+        string $format,
+        int $width,
+        int $height,
+        bool $forceWebP,
+        array $rebuildConfig,
+        array $storedSize,
+        int $thumbnailCount
+    ): void {
+        // The other side of the test above: the check stops only a rebuild that would reach the
+        // TypeError, not every one without the conversion.
+        $file = $this->upload(watermark: null, width: $width, height: $height, format: $format);
+        config($rebuildConfig);
         $level = DB::transactionLevel();
 
-        try {
-            $file->rebuildFromSource(location: 'uploads', relationName: 'files', forceWebP: false);
-            $this->fail('The rebuild was expected to throw a TypeError.');
-        } catch (TypeError) {
-            // Expected, with the method's transaction left open.
-            $this->assertSame($level + 1, DB::transactionLevel());
-        } finally {
-            // The method leaves its transaction open on an Error; see docs/rebuildFromSource.md.
-            DB::rollBack($level);
-        }
+        $this->assertTrue($file->rebuildFromSource(
+            location: 'uploads',
+            relationName: 'files',
+            forceWebP: $forceWebP
+        ));
 
-        // The record is rolled back to the old main file. The old files are gone and nothing was
-        // written in their place, whatever path the new main file would have had.
-        $this->assertSame($oldMain, RebuildableFile::find($file->id)->file);
-        $filesAfter = Storage::allFiles();
-        $this->assertSame([], array_values(array_diff($filesAfter, $filesBefore)), 'A file was written.');
-        $this->assertEqualsCanonicalizing(
-            array_map(fn ($path) => ltrim($path, '/'), [$oldMain, ...$oldThumbnails]),
-            array_values(array_diff($filesBefore, $filesAfter))
-        );
+        $this->assertSame($level, DB::transactionLevel());
+        $sizes = $this->storedSizes(RebuildableFile::find($file->id));
+        $this->assertSame($storedSize, $sizes['main']);
+        $this->assertCount($thumbnailCount, $sizes['thumbnails']);
     }
 
     #[Test]
@@ -463,9 +592,9 @@ class RebuildFromSourceTest extends TestCase
     #[Test]
     public function the_temporary_copy_is_removed_when_the_rebuild_throws(): void
     {
-        // The method catches only an Exception, so an Error - such as the known TypeError of 0.7.18
-        // - propagates to the caller. The fixture throws one while the thumbnails are written, after
-        // the main file has been rebuilt from the copy, to check the copy goes with it too.
+        // The method catches only an Exception, so an Error - such as the one for a file without an
+        // owner - propagates to the caller. The fixture throws one while the thumbnails are written,
+        // after the main file has been rebuilt from the copy, to check the copy goes with it too.
         $file = $this->upload(watermark: null);
         RebuildableFile::$throwOnThumbnails = true;
         $level = DB::transactionLevel();
@@ -771,7 +900,60 @@ class RebuildFromSourceTest extends TestCase
     }
 
     /**
-     * @param string $format png or webp
+     * Rebuild a file the check has to refuse, and check the rebuild returned false before it deleted
+     * anything or opened a transaction, and logged why at the given level.
+     */
+    private function assertRefusedWithoutChanges(
+        RebuildableFile $file,
+        bool $forceWebP,
+        string $level,
+        string $message
+    ): void {
+        $this->assertNotEmpty($file->thumbnails()->get());
+
+        $disk = $this->diskContents();
+        $rows = DB::table('files')->orderBy('id')->get()->all();
+        $transactionLevel = DB::transactionLevel();
+        $opened = 0;
+        DB::connection()->beforeStartingTransaction(function () use (&$opened) {
+            $opened++;
+        });
+        Log::spy();
+
+        $this->assertFalse($file->rebuildFromSource(
+            location: 'uploads',
+            relationName: 'files',
+            forceWebP: $forceWebP
+        ));
+
+        $this->assertSame(0, $opened, 'A transaction was opened.');
+        $this->assertSame($transactionLevel, DB::transactionLevel());
+        $this->assertSame($disk, $this->diskContents(), 'A stored file was changed.');
+        $this->assertEquals($rows, DB::table('files')->orderBy('id')->get()->all(), 'A record was changed.');
+        $this->assertTemporaryCopyRemoved();
+        Log::shouldHaveReceived($level)
+            ->once()
+            ->with(Mockery::on(fn ($logged) => str_contains($logged, $message)), Mockery::type('array'));
+    }
+
+    /**
+     * Every file on the disk, with a hash of its contents.
+     *
+     * @return array<string, string>
+     */
+    private function diskContents(): array
+    {
+        $contents = [];
+        foreach (Storage::allFiles() as $path) {
+            $contents[$path] = hash('sha256', Storage::get($path));
+        }
+        ksort($contents);
+
+        return $contents;
+    }
+
+    /**
+     * @param string $format png, jpg, gif or webp
      */
     private function imageFile(ImageInterface $image, string $name, string $format = 'png'): UploadedFile
     {
@@ -781,9 +963,14 @@ class RebuildFromSourceTest extends TestCase
         $base = tempnam(sys_get_temp_dir(), 'helper-upload-');
         $path = $base . '.' . $format;
         array_push($this->temporaryFiles, $base, $path);
-        ($format === 'webp' ? $image->toWebp(100) : $image->toPng())->save($path);
+        (match ($format) {
+            'webp' => $image->toWebp(100),
+            'jpg' => $image->toJpeg(90),
+            'gif' => $image->toGif(),
+            default => $image->toPng(),
+        })->save($path);
 
-        return new UploadedFile($path, $name, 'image/' . $format, null, true);
+        return new UploadedFile($path, $name, $format === 'jpg' ? 'image/jpeg' : 'image/' . $format, null, true);
     }
 
     /**
